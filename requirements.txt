@@ -2,3 +2,5 @@ streamlit
 pandas
 openai
 matplotlib
+gspread
+google-auth

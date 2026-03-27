@@ -39,7 +39,7 @@ def save_mood_to_db(team_size, total_score, avg_mood, label):
         INSERT INTO mood_records (timestamp, team_size, total_mood_score, average_mood, mood_label)
         VALUES (?, ?, ?, ?, ?)
     """, (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-          team_size, total_score, round(avg_mood, 2), label))
+          team_size, total_score, avg_mood, label))
     conn.commit()
     conn.close()
 
@@ -57,9 +57,9 @@ def load_mood_history_db():
 
 def get_mood_label(avg_mood):
     """Return the mood label for the given average score."""
-    if avg_mood < 2.5:
+    if avg_mood <= 2:
         return "Low"
-    elif avg_mood <= 3.5:
+    elif avg_mood <= 3:
         return "Neutral"
     else:
         return "Excited"
@@ -123,14 +123,14 @@ with tab1:
     # ------ Average mood (sum / team_size) ------
     if votes_so_far > 0:
         total_score = sum(st.session_state.mood_history)
-        avg_mood = total_score / team_size  # always divide by configured team size
+        avg_mood = round(total_score / team_size)  # always divide by configured team size
 
         if votes_so_far < team_size:
             st.caption(f"⚠️ Partial result — {votes_so_far} of {team_size} members have voted.")
 
-        st.metric("Average Mood Score", f"{avg_mood:.2f}", help="Sum of all mood scores ÷ number of team members")
+        st.metric("Average Mood Score", avg_mood, help="Sum of all mood scores ÷ number of team members (rounded)")
 
-        # Mood label intervals: Low < 2.5 ≤ Neutral ≤ 3.5 < Excited
+        # Mood label intervals: Low ≤ 2 < Neutral ≤ 3 < Excited
         mood_label = get_mood_label(avg_mood)
         if mood_label == "Low":
             st.warning(f"😐 Team mood: **{mood_label}** — The team energy is moderate, consider a check-in.")
@@ -145,11 +145,11 @@ with tab1:
             st.error("No mood votes recorded yet. Please select moods first.")
         else:
             total_score = sum(st.session_state.mood_history)
-            avg_mood = total_score / team_size
+            avg_mood = round(total_score / team_size)
             mood_label = get_mood_label(avg_mood)
 
             save_mood_to_db(team_size, total_score, avg_mood, mood_label)
-            st.success(f"✅ Mood saved! Average: {avg_mood:.2f} ({mood_label})")
+            st.success(f"✅ Mood saved! Average: {avg_mood} ({mood_label})")
             # Reset for next round
             st.session_state.mood_history = []
             st.session_state.last_mood = None

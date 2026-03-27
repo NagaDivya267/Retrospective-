@@ -23,9 +23,7 @@ _HEADERS = ["timestamp", "team_size", "total_mood_score", "average_mood", "mood_
 
 def _get_worksheet():
     """Return the gspread Worksheet, creating the tab and headers if needed."""
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=_SCOPES
-    )
+    creds = Credentials.from_service_account_file("credentials.json", scopes=_SCOPES)
     client = gspread.authorize(creds)
     spreadsheet = client.open_by_key(st.secrets["google_sheets"]["spreadsheet_id"])
     try:

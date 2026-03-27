@@ -58,7 +58,7 @@ def load_mood_history_db():
 def get_mood_label(avg_mood):
     """Return the mood label for the given average score."""
     if avg_mood < 2.5:
-        return "Medium"
+        return "Low"
     elif avg_mood <= 3.5:
         return "Neutral"
     else:
@@ -130,9 +130,9 @@ with tab1:
 
         st.metric("Average Mood Score", f"{avg_mood:.2f}", help="Sum of all mood scores ÷ number of team members")
 
-        # Mood label intervals: Medium < 2.5 ≤ Neutral ≤ 3.5 < Excited
+        # Mood label intervals: Low < 2.5 ≤ Neutral ≤ 3.5 < Excited
         mood_label = get_mood_label(avg_mood)
-        if mood_label == "Medium":
+        if mood_label == "Low":
             st.warning(f"😐 Team mood: **{mood_label}** — The team energy is moderate, consider a check-in.")
         elif mood_label == "Neutral":
             st.info(f"🙂 Team mood: **{mood_label}** — The team is steady. Room to grow!")

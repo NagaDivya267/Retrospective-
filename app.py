@@ -63,7 +63,8 @@ if "mood_history" not in st.session_state:
 
 if selected_mood:
     st.session_state.mood_history.append(selected_mood)
-  if st.session_state.mood_history:
+
+if st.session_state.mood_history:
     avg_mood = sum(st.session_state.mood_history) / len(st.session_state.mood_history)
 
     st.metric("Average Mood", f"{avg_mood:.2f}")

@@ -1,58 +1,60 @@
 import streamlit as st
-import sqlite3
 import datetime
 import pandas as pd
 import random
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="AI Scrum Master", layout="wide")
 
 st.title("🤖 AI Scrum Master Retrospective Tool")
 
 # ---------------------------------------------------------------------------
-# SQLite database helpers for mood data
+# Google Sheets helpers for mood data
 # ---------------------------------------------------------------------------
 
-DB_PATH = "mood_data.db"
+_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+_SHEET_TAB = "MoodHistory"
+_HEADERS = ["timestamp", "team_size", "total_mood_score", "average_mood", "mood_label"]
 
 
-def init_mood_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS mood_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            team_size INTEGER,
-            total_mood_score INTEGER,
-            average_mood REAL,
-            mood_label TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def save_mood_to_db(team_size, total_score, avg_mood, label):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO mood_records (timestamp, team_size, total_mood_score, average_mood, mood_label)
-        VALUES (?, ?, ?, ?, ?)
-    """, (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-          team_size, total_score, avg_mood, label))
-    conn.commit()
-    conn.close()
-
-
-def load_mood_history_db():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(
-        "SELECT timestamp, team_size, total_mood_score, average_mood, mood_label "
-        "FROM mood_records ORDER BY timestamp DESC LIMIT 20",
-        conn
+def _get_worksheet():
+    """Return the gspread Worksheet, creating the tab and headers if needed."""
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=_SCOPES
     )
-    conn.close()
-    return df
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(st.secrets["google_sheets"]["spreadsheet_id"])
+    try:
+        ws = spreadsheet.worksheet(_SHEET_TAB)
+    except gspread.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=_SHEET_TAB, rows=1000, cols=10)
+    if ws.row_values(1) != _HEADERS:
+        ws.insert_row(_HEADERS, 1)
+    return ws
+
+
+def save_mood_to_sheet(team_size, total_score, avg_mood, label):
+    ws = _get_worksheet()
+    ws.append_row([
+        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        team_size,
+        total_score,
+        avg_mood,
+        label,
+    ])
+
+
+def load_mood_history_sheet():
+    ws = _get_worksheet()
+    records = ws.get_all_records()
+    if not records:
+        return pd.DataFrame(columns=_HEADERS)
+    df = pd.DataFrame(records)[_HEADERS]
+    return df.tail(20).iloc[::-1].reset_index(drop=True)
 
 
 def get_mood_label(avg_mood):
@@ -64,8 +66,6 @@ def get_mood_label(avg_mood):
     else:
         return "Excited"
 
-
-init_mood_db()
 
 # ---------------------------------------------------------------------------
 # Create Tabs
@@ -139,8 +139,8 @@ with tab1:
         else:
             st.success(f"🚀 Team mood: **{mood_label}** — Great energy! Keep it up!")
 
-    # ------ Submit button: save to DB ------
-    if st.button("Submit Team Mood to Database"):
+    # ------ Submit button: save to Google Sheets ------
+    if st.button("Submit Team Mood to Google Sheets"):
         if votes_so_far == 0:
             st.error("No mood votes recorded yet. Please select moods first.")
         else:
@@ -148,7 +148,7 @@ with tab1:
             avg_mood = round(total_score / team_size)
             mood_label = get_mood_label(avg_mood)
 
-            save_mood_to_db(team_size, total_score, avg_mood, mood_label)
+            save_mood_to_sheet(team_size, total_score, avg_mood, mood_label)
             st.success(f"✅ Mood saved! Average: {avg_mood} ({mood_label})")
             # Reset for next round
             st.session_state.mood_history = []
@@ -163,7 +163,7 @@ with tab1:
     # ------ Display saved mood history from DB ------
     st.write("---")
     st.write("### 📋 Saved Mood History")
-    history_df = load_mood_history_db()
+    history_df = load_mood_history_sheet()
     if history_df.empty:
         st.write("No mood records saved yet.")
     else:

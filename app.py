@@ -1,72 +1,173 @@
 import streamlit as st
+import sqlite3
+import datetime
+import pandas as pd
 import random
 
 st.set_page_config(page_title="AI Scrum Master", layout="wide")
 
 st.title("🤖 AI Scrum Master Retrospective Tool")
 
+# ---------------------------------------------------------------------------
+# SQLite database helpers for mood data
+# ---------------------------------------------------------------------------
+
+DB_PATH = "mood_data.db"
+
+
+def init_mood_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS mood_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            team_size INTEGER,
+            total_mood_score INTEGER,
+            average_mood REAL,
+            mood_label TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def save_mood_to_db(team_size, total_score, avg_mood, label):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO mood_records (timestamp, team_size, total_mood_score, average_mood, mood_label)
+        VALUES (?, ?, ?, ?, ?)
+    """, (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+          team_size, total_score, round(avg_mood, 2), label))
+    conn.commit()
+    conn.close()
+
+
+def load_mood_history_db():
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query(
+        "SELECT timestamp, team_size, total_mood_score, average_mood, mood_label "
+        "FROM mood_records ORDER BY timestamp DESC LIMIT 20",
+        conn
+    )
+    conn.close()
+    return df
+
+
+def get_mood_label(avg_mood):
+    """Return the mood label for the given average score."""
+    if avg_mood < 2.5:
+        return "Medium"
+    elif avg_mood <= 3.5:
+        return "Neutral"
+    else:
+        return "Excited"
+
+
+init_mood_db()
+
+# ---------------------------------------------------------------------------
 # Create Tabs
+# ---------------------------------------------------------------------------
+
 tab1, tab2, tab3, tab4 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🎯 AI Questions",
     "✅ Action Tracker"
 ])
+
 with tab1:
     st.subheader("Team Mood Check")
 
-    st.write("Select your mood:")
+    # ------ Team size input ------
+    team_size = st.number_input(
+        "Number of team members", min_value=1, max_value=50, value=5, step=1
+    )
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # ------ Session state initialisation ------
+    if "mood_history" not in st.session_state:
+        st.session_state.mood_history = []
+    if "last_mood" not in st.session_state:
+        st.session_state.last_mood = None
 
+    # ------ Emoji mood buttons ------
     moods = {
         "😡": 1,
         "😟": 2,
         "😐": 3,
         "😊": 4,
-        "🚀": 5
+        "🚀": 5,
     }
 
-    selected_mood = None
+    st.write("Each team member selects their mood:")
+    col1, col2, col3, col4, col5 = st.columns(5)
 
+    selected_mood = None
     for i, (emoji, value) in enumerate(moods.items()):
         if [col1, col2, col3, col4, col5][i].button(emoji):
             selected_mood = value
-            st.session_state["last_mood"] = value
+            st.session_state.last_mood = value
+            st.session_state.mood_history.append(value)
 
-    if "last_mood" in st.session_state:
-        mood = st.session_state["last_mood"]
+    # Show last individual selection
+    if st.session_state.last_mood is not None:
+        mood = st.session_state.last_mood
+        emoji_label = "".join(k for k, v in moods.items() if v == mood)
+        st.info(f"Last selected: {emoji_label} — score {mood}")
 
-        if mood <= 2:
-            st.error("⚠️ Team morale is low")
-        elif mood == 3:
-            st.warning("🙂 Neutral mood")
+    votes_so_far = len(st.session_state.mood_history)
+    st.write(f"**Votes collected:** {votes_so_far} / {team_size}")
+
+    # ------ Average mood (sum / team_size) ------
+    if votes_so_far > 0:
+        total_score = sum(st.session_state.mood_history)
+        avg_mood = total_score / team_size  # always divide by configured team size
+
+        if votes_so_far < team_size:
+            st.caption(f"⚠️ Partial result — {votes_so_far} of {team_size} members have voted.")
+
+        st.metric("Average Mood Score", f"{avg_mood:.2f}", help="Sum of all mood scores ÷ number of team members")
+
+        # Mood label intervals: Medium < 2.5 ≤ Neutral ≤ 3.5 < Excited
+        mood_label = get_mood_label(avg_mood)
+        if mood_label == "Medium":
+            st.warning(f"😐 Team mood: **{mood_label}** — The team energy is moderate, consider a check-in.")
+        elif mood_label == "Neutral":
+            st.info(f"🙂 Team mood: **{mood_label}** — The team is steady. Room to grow!")
         else:
-            st.success("🚀 Positive team energy")
-if "mood_history" not in st.session_state:
-    st.session_state.mood_history = []
+            st.success(f"🚀 Team mood: **{mood_label}** — Great energy! Keep it up!")
 
-if selected_mood:
-    st.session_state.mood_history.append(selected_mood)
-  if st.session_state.mood_history:
-    avg_mood = sum(st.session_state.mood_history) / len(st.session_state.mood_history)
+    # ------ Submit button: save to DB ------
+    if st.button("Submit Team Mood to Database"):
+        if votes_so_far == 0:
+            st.error("No mood votes recorded yet. Please select moods first.")
+        else:
+            total_score = sum(st.session_state.mood_history)
+            avg_mood = total_score / team_size
+            mood_label = get_mood_label(avg_mood)
 
-    st.metric("Average Mood", f"{avg_mood:.2f}")
+            save_mood_to_db(team_size, total_score, avg_mood, mood_label)
+            st.success(f"✅ Mood saved! Average: {avg_mood:.2f} ({mood_label})")
+            # Reset for next round
+            st.session_state.mood_history = []
+            st.session_state.last_mood = None
 
-    if avg_mood < 2.5:
-        st.error("Team is struggling 😟")
-    elif avg_mood < 4:
-        st.warning("Team is okay but needs improvement")
+    # ------ Reset button ------
+    if st.button("Reset Mood Votes"):
+        st.session_state.mood_history = []
+        st.session_state.last_mood = None
+        st.info("Mood votes reset.")
+
+    # ------ Display saved mood history from DB ------
+    st.write("---")
+    st.write("### 📋 Saved Mood History")
+    history_df = load_mood_history_db()
+    if history_df.empty:
+        st.write("No mood records saved yet.")
     else:
-        st.success("Team is performing great 🚀")
-import pandas as pd
-import os
-
-FILE_NAME = "sprint_data.csv"
-
-with tab2:
-    import pandas as pd
-import streamlit as st
+        st.dataframe(history_df, use_container_width=True)
 
 with tab2:
     st.subheader("Sprint Insights Tracker")

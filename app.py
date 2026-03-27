@@ -1,5 +1,20 @@
 import streamlit as st
 import random
+import json
+from oauth2client.service_account import ServiceAccountCredentials
+
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+try:
+    # Cloud (Streamlit)
+    creds_dict = json.loads(st.secrets["google"]["credentials"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+except Exception:
+    # Local fallback
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 
 st.set_page_config(page_title="AI Scrum Master", layout="wide")
 

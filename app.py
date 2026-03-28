@@ -12,6 +12,7 @@ import gspread
 import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
+from openai import OpenAI
 
 # Create Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -490,6 +491,7 @@ with tab4:
                 # ---- Show Saved Discussions ----
                 st.write("### 📌 Saved Discussion Points")
                 discussion_data = discussion_sheet.get_all_records()
+                filtered_discussion = pd.DataFrame(columns=["Question", "Discussion"])
                 if discussion_data:
                     discussion_df = pd.DataFrame(discussion_data)
                     filtered_discussion = discussion_df[
@@ -501,5 +503,79 @@ with tab4:
                         st.dataframe(filtered_discussion[["Discussion"]], use_container_width=True)
                 else:
                     st.info("No discussion points saved yet.")
+
+                # ---- AI Analysis ----
+                st.write("### 🤖 AI Analysis")
+                if st.button("Generate AI Insights", key=f"ai_insights_{selected_question}"):
+                    api_key = st.secrets.get("OPENAI_API_KEY")
+                    if not api_key:
+                        st.error("OPENAI_API_KEY is missing. Add it in Streamlit secrets.")
+                    elif filtered_discussion.empty:
+                        st.warning("No discussion data available")
+                    else:
+                        discussion_text = "\n".join(
+                            filtered_discussion["Discussion"].dropna().astype(str).tolist()
+                        ).strip()
+
+                        if not discussion_text:
+                            st.warning("No discussion data available")
+                        else:
+                            # Keep payload bounded for predictable latency/cost.
+                            discussion_text = discussion_text[:8000]
+                            prompt = f"""
+You are a highly experienced Scrum Master working with Agile teams.
+
+Analyze ONLY the discussion provided below. Do NOT assume anything beyond this data.
+
+Discussion:
+{discussion_text}
+
+Instructions:
+- Be precise and practical
+- Do NOT hallucinate or invent problems
+- Base every insight ONLY on the provided inputs
+- Keep language simple, human-like, and relatable
+- Avoid generic statements
+
+If the data is insufficient, say: "Not enough data to derive insight"
+
+Output format:
+
+🔍 Key Themes:
+- ...
+
+⚠️ Observed Problems:
+- ...
+
+✅ Positive Signals:
+- ...
+
+🎯 Actionable Improvements:
+- ...
+- ...
+- ...
+"""
+
+                            try:
+                                client = OpenAI(api_key=api_key)
+                                with st.spinner("Generating AI insights..."):
+                                    response = client.chat.completions.create(
+                                        model="gpt-4.1-mini",
+                                        messages=[
+                                            {
+                                                "role": "system",
+                                                "content": "You are a practical Scrum Master assistant. Only use provided discussion text.",
+                                            },
+                                            {"role": "user", "content": prompt},
+                                        ],
+                                        temperature=0.2,
+                                        max_tokens=700,
+                                    )
+
+                                ai_output = response.choices[0].message.content or "Not enough data to derive insight"
+                                st.write("### 📊 AI Insights")
+                                st.markdown(ai_output)
+                            except Exception as ai_error:
+                                st.error(f"Unable to generate AI insights: {ai_error}")
     except Exception as error:
         st.error(f"Unable to load Scrum Master dashboard: {error}")

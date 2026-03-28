@@ -472,7 +472,7 @@ with tab4:
 
                 # ---- Capture Discussion Points ----
                 st.write("### 🧠 Capture Discussion Points")
-                discussion_input = st.text_area("Summarize team discussion for this question")
+                discussion_input = st.text_area("Summarize team discussion for this question", key=f"discussion_{selected_question}")
 
                 if st.button("Save Discussion"):
                     if discussion_input.strip():

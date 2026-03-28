@@ -14,6 +14,99 @@ import streamlit as st
 from google.oauth2.service_account import Credentials
 from openai import OpenAI
 
+
+# -------------------------------
+# Page Config and Global UI Theme
+# -------------------------------
+st.set_page_config(
+    page_title="AI Scrum Master Assistant",
+    layout="wide",
+    page_icon="🚀",
+)
+
+st.markdown(
+    """
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+html, body, [class*="css"]  {
+    font-family: 'Manrope', sans-serif;
+    font-size: 14px;
+}
+
+h1 { font-size: 28px !important; font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 22px !important; font-weight: 600; }
+h3 { font-size: 18px !important; font-weight: 600; }
+
+.stApp {
+    background:
+        radial-gradient(1200px 500px at 5% -10%, rgba(14, 165, 233, 0.15), transparent 55%),
+        radial-gradient(1000px 420px at 95% -10%, rgba(20, 184, 166, 0.12), transparent 55%),
+        linear-gradient(180deg, #f8fbff 0%, #f3f7fb 100%);
+}
+
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0.35rem;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(14, 116, 144, 0.15);
+    border-radius: 12px;
+    padding: 0.3rem;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: 10px;
+    font-weight: 600;
+    padding: 0.45rem 0.75rem;
+}
+
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, #0f766e 0%, #0369a1 100%);
+    color: white !important;
+}
+
+.stButton > button {
+    font-size: 14px;
+    border-radius: 10px;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid #0f766e;
+    background: linear-gradient(135deg, #0f766e 0%, #0369a1 100%);
+    color: #ffffff;
+}
+
+.stButton > button:hover {
+    border-color: #0e7490;
+    filter: brightness(1.03);
+}
+
+input, textarea {
+    font-size: 14px !important;
+}
+
+[data-testid="stMetric"] {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(15, 118, 110, 0.15);
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+}
+
+[data-testid="stDataFrame"] {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 118, 110, 0.12);
+    border-radius: 12px;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+st.title("AI Scrum Master Assistant")
+st.caption("Smarter retrospectives | Better decisions | Faster delivery")
+
 # Create Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "😊 Mood",
@@ -230,6 +323,11 @@ def ensure_spill_over_column(df: pd.DataFrame) -> pd.DataFrame:
         )
     return df
 
+
+def mark_sync_event(label: str) -> None:
+    st.session_state["last_sync_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["last_sync_event"] = label
+
 with tab2:
     st.subheader("Sprint Insights Tracker")
 
@@ -299,6 +397,7 @@ with tab2:
     if sheet_col2.button("Save Sprint Data"):
         try:
             save_sprint_data_to_google_sheet(st.session_state.sprint_df, sprint_columns)
+            mark_sync_event("Saved sprint data")
             st.success("Sprint data saved to Google Sheet successfully!")
         except Exception as error:
             st.error(f"Unable to save sprint data: {error}")
@@ -470,6 +569,7 @@ with tab3:
                             current_question,
                             user_input.strip(),
                         ])
+                        mark_sync_event("Saved spin wheel response")
                         st.success("✅ Response submitted!")
                         st.rerun()
                     else:
@@ -482,6 +582,31 @@ with tab3:
 
 with tab4:
     st.subheader("👑 Scrum Master Dashboard")
+
+    st.write("### 🩺 System Health")
+    health_col1, health_col2, health_col3 = st.columns(3)
+
+    api_key, _, _ = get_openai_api_key()
+    if api_key:
+        health_col1.success("OpenAI Key: Ready")
+    else:
+        health_col1.error("OpenAI Key: Missing")
+
+    try:
+        workbook = get_google_workbook()
+        health_col2.success(f"Google Sheets: Connected ({workbook.title})")
+    except Exception:
+        health_col2.error("Google Sheets: Not connected")
+
+    last_sync_time = st.session_state.get("last_sync_time", "Never")
+    last_sync_event = st.session_state.get("last_sync_event", "No sync yet")
+    health_col3.info(f"Last Sync: {last_sync_time}")
+    st.caption(f"Sync Event: {last_sync_event}")
+
+    if st.button("🔁 Retry Connection", key="retry_connection_button"):
+        get_google_workbook.clear()
+        st.session_state["last_sync_event"] = "Manual health retry"
+        st.rerun()
 
     col_refresh, _ = st.columns([1, 5])
     if col_refresh.button("🔄 Refresh Data"):
@@ -544,6 +669,7 @@ with tab4:
                             discussion_sheet.clear()
                             discussion_sheet.append_row(["Question", "Discussion"])
                         discussion_sheet.append_row([selected_question, discussion_input.strip()])
+                        mark_sync_event("Saved discussion point")
                         st.success("Discussion saved!")
                         st.rerun()
                     else:
@@ -721,14 +847,44 @@ with tab5:
         except gspread.WorksheetNotFound:
             action_sheet = main_sheet.add_worksheet(title="Actions", rows=500, cols=10)
 
-        existing_header = action_sheet.row_values(1)
-        expected_header = ["Action", "Priority"]
-        if existing_header != expected_header:
-            action_sheet.clear()
-            action_sheet.append_row(expected_header)
+        existing_header = [header.strip() for header in action_sheet.row_values(1)]
+        if not existing_header:
+            action_sheet.append_row(["Action", "Priority"])
 
         action_data = action_sheet.get_all_records()
         action_df = pd.DataFrame(action_data)
+
+        # Backward compatibility: support older schemas and normalize to Action/Priority.
+        if not action_df.empty:
+            if "Action" not in action_df.columns:
+                if "Action Item" in action_df.columns:
+                    action_df["Action"] = action_df["Action Item"]
+                elif "Task" in action_df.columns:
+                    action_df["Action"] = action_df["Task"]
+                else:
+                    action_df["Action"] = ""
+
+            if "Priority" not in action_df.columns:
+                if "Status" in action_df.columns:
+                    status_series = action_df["Status"].astype(str).str.strip().str.lower()
+                    action_df["Priority"] = status_series.map(
+                        {
+                            "open": "Medium",
+                            "in progress": "High",
+                            "done": "Low",
+                            "high": "High",
+                            "medium": "Medium",
+                            "low": "Low",
+                        }
+                    ).fillna("Medium")
+                else:
+                    action_df["Priority"] = "Medium"
+
+            action_df["Action"] = action_df["Action"].astype(str).str.strip()
+            action_df["Priority"] = action_df["Priority"].astype(str).str.strip().str.title()
+            action_df = action_df[action_df["Action"] != ""].copy()
+            action_df.loc[~action_df["Priority"].isin(["High", "Medium", "Low"]), "Priority"] = "Medium"
+            action_df = action_df[["Action", "Priority"]]
 
         if action_df.empty:
             st.info("No actions yet")
@@ -818,6 +974,7 @@ with tab5:
         if st.button("Add Action", key="add_action_button"):
             if action_item.strip():
                 action_sheet.append_row([action_item.strip(), priority])
+                mark_sync_event("Added action item")
                 st.success("Action added!")
                 st.rerun()
             else:
@@ -874,6 +1031,7 @@ Action Item | Priority
             if st.button("Save AI Actions", key="save_ai_actions_button"):
                 lines = [ln.strip() for ln in ai_action_text.split("\n") if ln.strip()]
                 saved_count = 0
+                existing_actions = set(action_df["Action"].astype(str).str.strip().str.lower()) if not action_df.empty else set()
 
                 for line in lines:
                     if "|" not in line:
@@ -898,10 +1056,15 @@ Action Item | Priority
                     else:
                         continue
 
+                    if action_text.strip().lower() in existing_actions:
+                        continue
+
                     action_sheet.append_row([action_text, clean_priority])
+                    existing_actions.add(action_text.strip().lower())
                     saved_count += 1
 
                 if saved_count > 0:
+                    mark_sync_event("Saved AI actions")
                     st.success(f"Saved {saved_count} AI actions!")
                     st.rerun()
                 else:
@@ -940,6 +1103,7 @@ Action Item | Priority
                 if new_action.strip():
                     action_sheet.update_acell(f"A{selected_sheet_row}", new_action.strip())
                     action_sheet.update_acell(f"B{selected_sheet_row}", new_priority)
+                    mark_sync_event("Updated action item")
                     st.success("Updated!")
                     st.rerun()
                 else:

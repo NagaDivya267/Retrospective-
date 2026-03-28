@@ -1,5 +1,6 @@
 import os
 import random
+import time
 from datetime import datetime
 
 import gspread
@@ -70,14 +71,13 @@ SPRINT_WORKSHEET_NAME = "Sprint Insights"
 CONFIG_WORKSHEET_NAME = "Config"
 RESPONSES_WORKSHEET_NAME = "Responses"
 spin_questions = [
-    "What went well this sprint?",
-    "What did not go well?",
-    "Biggest blocker?",
-    "What should we improve?",
-    "Where did we waste time?",
-    "What frustrated you?",
-    "One improvement for next sprint?",
-    "Any risks we ignored?",
+    "🚀 What went well?",
+    "😕 What didn't go well?",
+    "⛔ Biggest blocker?",
+    "💡 Improvement idea?",
+    "🔥 What frustrated you?",
+    "🎯 One experiment for next sprint?",
+    "🤝 Team collaboration feedback?",
 ]
 
 
@@ -291,24 +291,38 @@ with tab2:
             st.success("✅ Stable scope")
 
 with tab3:
-    st.subheader("🎡 Team Spin Wheel")
+    st.subheader("🎡 Spin the Retro Wheel")
 
     try:
         config_sheet = get_or_create_worksheet(CONFIG_WORKSHEET_NAME, rows=20, cols=5)
         response_sheet = get_or_create_worksheet(RESPONSES_WORKSHEET_NAME, rows=500, cols=10)
 
-        if st.button("🎯 Spin (One Question for Team)"):
-            question = random.choice(spin_questions)
-            config_sheet.update_acell("A1", question)
-            st.success(f"Selected: {question}")
+        # Optional spin audio
+        _audio_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spin.mp3")
+        if os.path.exists(_audio_path):
+            st.audio(_audio_path)
+
+        if st.button("🎯 Spin the Wheel"):
+            placeholder = st.empty()
+
+            # Fast spin animation
+            for _ in range(10):
+                placeholder.markdown(f"### 🎡 {random.choice(spin_questions)}")
+                time.sleep(0.1)
+
+            # Final selection
+            final_question = random.choice(spin_questions)
+            config_sheet.update_acell("A1", final_question)
+            placeholder.markdown(f"## 🎯 Final Question:\n### {final_question}")
+            st.balloons()
 
         current_question = config_sheet.acell("A1").value
 
         if current_question:
             st.write("### 📌 Current Question")
-            st.info(current_question)
+            st.success(current_question)
 
-            user_input = st.text_area("Enter your response")
+            user_input = st.text_area("💬 Your response")
 
             if st.button("Submit Response"):
                 if user_input.strip():
@@ -324,11 +338,11 @@ with tab3:
                         current_question,
                         user_input.strip(),
                     ])
-                    st.success("Response submitted!")
+                    st.success("✅ Response submitted!")
                 else:
                     st.warning("Please add something")
         else:
-            st.warning("No question is selected")
+            st.warning("No question is selected yet. Hit Spin the Wheel first!")
     except Exception as error:
         st.error(f"Unable to load spin wheel data: {error}")
 

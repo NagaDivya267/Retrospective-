@@ -197,8 +197,3 @@ with tab2:
             st.error("⚠️ High scope creep")
         else:
             st.success("✅ Stable scope")
-
-        if avg_velocity < 20:
-            st.warning("⚠️ Low velocity trend")
-        else:
-            st.success("🚀 Healthy velocity")

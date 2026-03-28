@@ -490,7 +490,7 @@ with tab3:
                             user_input.strip(),
                         ])
                         mark_sync_event("Saved spin wheel response")
-                        st.success("✅ Response submitted!")
+                        st.success("✅ Submitted successfully")
                         st.rerun()
                     else:
                         st.warning("Please add something")
@@ -504,13 +504,7 @@ with tab4:
     st.subheader("👑 Scrum Master Dashboard")
 
     st.write("### 🩺 System Health")
-    health_col1, health_col2, health_col3 = st.columns(3)
-
-    api_key, _, _ = get_openai_api_key()
-    if api_key:
-        health_col1.success("OpenAI Key: Ready")
-    else:
-        health_col1.error("OpenAI Key: Missing")
+    health_col2, health_col3 = st.columns(2)
 
     try:
         workbook = get_google_workbook()
@@ -946,41 +940,74 @@ Action Item | Priority
 
         if ai_action_text:
             st.write("### Suggested Actions")
-            st.text(ai_action_text)
+
+            parsed_ai_actions: list[dict[str, str]] = []
+            lines = [ln.strip() for ln in ai_action_text.split("\n") if ln.strip()]
+
+            for line in lines:
+                if "|" not in line:
+                    continue
+
+                left, right = [part.strip() for part in line.split("|", 1)]
+                if not left or not right:
+                    continue
+
+                # Skip markdown table headers and separator rows.
+                if left.lower() in {"action item", "action", "task"}:
+                    continue
+                if set(left).issubset({"-", ":"}) or set(right).issubset({"-", ":"}):
+                    continue
+
+                raw_priority = right.lower()
+                if raw_priority.startswith("high"):
+                    clean_priority = "High"
+                elif raw_priority.startswith("medium"):
+                    clean_priority = "Medium"
+                elif raw_priority.startswith("low"):
+                    clean_priority = "Low"
+                else:
+                    continue
+
+                parsed_ai_actions.append({"Action Item": left, "Priority": clean_priority})
+
+            editable_ai_actions_df = pd.DataFrame(columns=["Action Item", "Priority"])
+            if parsed_ai_actions:
+                ai_actions_df = pd.DataFrame(parsed_ai_actions)
+                editable_ai_actions_df = st.data_editor(
+                    ai_actions_df,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key="ai_actions_editor",
+                    column_config={
+                        "Priority": st.column_config.SelectboxColumn(
+                            "Priority",
+                            options=["High", "Medium", "Low"],
+                            required=True,
+                        )
+                    },
+                )
+            else:
+                st.warning("AI response could not be parsed into table format. Showing raw output below.")
+                st.text(ai_action_text)
 
             if st.button("Save AI Actions", key="save_ai_actions_button"):
-                lines = [ln.strip() for ln in ai_action_text.split("\n") if ln.strip()]
                 saved_count = 0
                 existing_actions = set(action_df["Action"].astype(str).str.strip().str.lower()) if not action_df.empty else set()
 
-                for line in lines:
-                    if "|" not in line:
+                rows_to_save = editable_ai_actions_df.to_dict("records")
+
+                for row in rows_to_save:
+                    action_text = str(row.get("Action Item", "")).strip()
+                    clean_priority = str(row.get("Priority", "")).strip().title()
+
+                    if not action_text or clean_priority not in {"High", "Medium", "Low"}:
                         continue
 
-                    parts = [p.strip() for p in line.split("|")]
-                    if len(parts) != 2:
-                        continue
-
-                    action_text = parts[0]
-                    raw_priority = parts[1].lower()
-
-                    if action_text.lower() in {"action item", "action", "task"}:
-                        continue
-
-                    if raw_priority.startswith("high"):
-                        clean_priority = "High"
-                    elif raw_priority.startswith("medium"):
-                        clean_priority = "Medium"
-                    elif raw_priority.startswith("low"):
-                        clean_priority = "Low"
-                    else:
-                        continue
-
-                    if action_text.strip().lower() in existing_actions:
+                    if action_text.lower() in existing_actions:
                         continue
 
                     action_sheet.append_row([action_text, clean_priority])
-                    existing_actions.add(action_text.strip().lower())
+                    existing_actions.add(action_text.lower())
                     saved_count += 1
 
                 if saved_count > 0:

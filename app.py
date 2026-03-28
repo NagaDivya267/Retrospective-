@@ -15,11 +15,12 @@ from google.oauth2.service_account import Credentials
 from openai import OpenAI
 
 # Create Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🎡 Spin Wheel",
-    "👑 Scrum Master Dashboard"
+    "👑 Dashboard",
+    "📌 Action Tracker"
 ])
 with tab1:
     st.subheader("Team Mood Check")
@@ -709,3 +710,239 @@ with tab4:
                         st.rerun()
     except Exception as error:
         st.error(f"Unable to load Scrum Master dashboard: {error}")
+
+with tab5:
+    st.subheader("📌 Action Tracker")
+
+    try:
+        main_sheet = get_google_workbook()
+        try:
+            action_sheet = main_sheet.worksheet("Actions")
+        except gspread.WorksheetNotFound:
+            action_sheet = main_sheet.add_worksheet(title="Actions", rows=500, cols=10)
+
+        existing_header = action_sheet.row_values(1)
+        expected_header = ["Action", "Priority"]
+        if existing_header != expected_header:
+            action_sheet.clear()
+            action_sheet.append_row(expected_header)
+
+        action_data = action_sheet.get_all_records()
+        action_df = pd.DataFrame(action_data)
+
+        if action_df.empty:
+            st.info("No actions yet")
+        else:
+            normalized_priority = action_df["Priority"].astype(str).str.strip().str.title()
+            high_count = int((normalized_priority == "High").sum())
+            medium_count = int((normalized_priority == "Medium").sum())
+            low_count = int((normalized_priority == "Low").sum())
+
+            st.write("### 📊 Priority Summary")
+            summary_col1, summary_col2, summary_col3 = st.columns(3)
+            summary_col1.metric("High", high_count)
+            summary_col2.metric("Medium", medium_count)
+            summary_col3.metric("Low", low_count)
+
+            st.write("### 🔎 Filter & Sort")
+            filter_col, sort_col = st.columns(2)
+
+            selected_priority_filter = filter_col.selectbox(
+                "Priority Filter",
+                ["All", "High", "Medium", "Low"],
+                key="priority_filter",
+            )
+            selected_sort = sort_col.selectbox(
+                "Sort By",
+                ["Priority (High to Low)", "Priority (Low to High)", "Action (A-Z)", "Action (Z-A)"],
+                key="priority_sort",
+            )
+
+            filtered_actions_df = action_df.copy()
+            filtered_actions_df["Priority"] = (
+                filtered_actions_df["Priority"].astype(str).str.strip().str.title()
+            )
+
+            if selected_priority_filter != "All":
+                filtered_actions_df = filtered_actions_df[
+                    filtered_actions_df["Priority"] == selected_priority_filter
+                ]
+
+            priority_rank = {"High": 0, "Medium": 1, "Low": 2}
+            filtered_actions_df["_priority_rank"] = filtered_actions_df["Priority"].map(priority_rank).fillna(3)
+
+            if selected_sort == "Priority (High to Low)":
+                filtered_actions_df = filtered_actions_df.sort_values(
+                    by=["_priority_rank", "Action"],
+                    ascending=[True, True],
+                )
+            elif selected_sort == "Priority (Low to High)":
+                filtered_actions_df = filtered_actions_df.sort_values(
+                    by=["_priority_rank", "Action"],
+                    ascending=[False, True],
+                )
+            elif selected_sort == "Action (A-Z)":
+                filtered_actions_df = filtered_actions_df.sort_values(by="Action", ascending=True)
+            else:
+                filtered_actions_df = filtered_actions_df.sort_values(by="Action", ascending=False)
+
+            filtered_actions_df = filtered_actions_df.drop(columns=["_priority_rank"])
+
+            def highlight_priority(cell_value):
+                value = str(cell_value).strip().lower()
+                if value == "high":
+                    return "background-color: #ffe4e6; color: #9f1239; font-weight: 700;"
+                if value == "medium":
+                    return "background-color: #fff7ed; color: #9a3412; font-weight: 700;"
+                if value == "low":
+                    return "background-color: #ecfdf5; color: #065f46; font-weight: 700;"
+                return ""
+
+            styled_df = filtered_actions_df.style.map(highlight_priority, subset=["Priority"])
+            st.dataframe(styled_df, use_container_width=True)
+
+            if filtered_actions_df.empty:
+                st.info("No actions match the selected filter.")
+
+        st.write("### ➕ Add Action Item")
+        add_col1, add_col2 = st.columns(2)
+
+        action_item = add_col1.text_input("Action Item", key="action_item_input")
+        priority = add_col2.selectbox(
+            "Priority",
+            ["High", "Medium", "Low"],
+            index=1,
+            key="action_priority_input",
+        )
+
+        if st.button("Add Action", key="add_action_button"):
+            if action_item.strip():
+                action_sheet.append_row([action_item.strip(), priority])
+                st.success("Action added!")
+                st.rerun()
+            else:
+                st.warning("Please fill Action Item")
+
+        st.write("### 🤖 Generate Actions from AI")
+
+        ai_action_text = st.session_state.get("ai_actions_text", "")
+        source_insights = st.session_state.get("ai_clustered_data", "") or st.session_state.get("clustered_data", "")
+
+        if st.button("Generate AI Actions", key="generate_ai_actions_button"):
+            api_key, key_source, secret_keys = get_openai_api_key()
+            if not api_key:
+                st.error("OpenAI key is missing. Add OPENAI_API_KEY in Streamlit secrets and restart the app.")
+                st.caption(
+                    f"Diagnostics: key_source={key_source}; top_level_secrets={', '.join(secret_keys) if secret_keys else 'none'}"
+                )
+            elif not str(source_insights).strip():
+                st.warning("No AI insights found. Generate Smart Insights in Dashboard first.")
+            else:
+                prompt = f"""
+Based on the following retrospective insights, generate actionable tasks.
+
+Insights:
+{source_insights}
+
+Rules:
+- Provide 3-5 actions
+- Each must be specific and implementable
+- Priority must be one of: High, Medium, Low
+- Keep output concise
+
+Output format:
+Action Item | Priority
+"""
+
+                try:
+                    client = OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-4.1-mini",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.2,
+                    )
+
+                    ai_action_text = (response.choices[0].message.content or "").strip()
+                    st.session_state.ai_actions_text = ai_action_text
+                except Exception as ai_error:
+                    st.error(f"Unable to generate AI actions: {ai_error}")
+
+        if ai_action_text:
+            st.write("### Suggested Actions")
+            st.text(ai_action_text)
+
+            if st.button("Save AI Actions", key="save_ai_actions_button"):
+                lines = [ln.strip() for ln in ai_action_text.split("\n") if ln.strip()]
+                saved_count = 0
+
+                for line in lines:
+                    if "|" not in line:
+                        continue
+
+                    parts = [p.strip() for p in line.split("|")]
+                    if len(parts) != 2:
+                        continue
+
+                    action_text = parts[0]
+                    raw_priority = parts[1].lower()
+
+                    if action_text.lower() in {"action item", "action", "task"}:
+                        continue
+
+                    if raw_priority.startswith("high"):
+                        clean_priority = "High"
+                    elif raw_priority.startswith("medium"):
+                        clean_priority = "Medium"
+                    elif raw_priority.startswith("low"):
+                        clean_priority = "Low"
+                    else:
+                        continue
+
+                    action_sheet.append_row([action_text, clean_priority])
+                    saved_count += 1
+
+                if saved_count > 0:
+                    st.success(f"Saved {saved_count} AI actions!")
+                    st.rerun()
+                else:
+                    st.warning("No valid AI actions found to save.")
+
+        st.write("### ✏️ Edit Action")
+        if not action_df.empty and all(col in action_df.columns for col in ["Action", "Priority"]):
+            action_options = [
+                f"{row_num}: {getattr(row, 'Action', '')} ({getattr(row, 'Priority', '')})"
+                for row_num, row in enumerate(action_df.itertuples(index=False), start=2)
+            ]
+            selected_action_label = st.selectbox(
+                "Select Action",
+                action_options,
+                key="action_select_to_edit",
+            )
+            selected_index = action_options.index(selected_action_label)
+            selected_sheet_row = int(selected_action_label.split(":", 1)[0])
+            selected_row = action_df.iloc[selected_index]
+
+            new_action = st.text_input("Action", str(selected_row["Action"]), key="edit_action_text")
+
+            priority_options = ["High", "Medium", "Low"]
+            current_priority = str(selected_row["Priority"]).strip().title()
+            if current_priority not in priority_options:
+                current_priority = "Medium"
+
+            new_priority = st.selectbox(
+                "Priority Status",
+                priority_options,
+                index=priority_options.index(current_priority),
+                key="edit_action_priority",
+            )
+
+            if st.button("Update Action", key="update_action_button"):
+                if new_action.strip():
+                    action_sheet.update_acell(f"A{selected_sheet_row}", new_action.strip())
+                    action_sheet.update_acell(f"B{selected_sheet_row}", new_priority)
+                    st.success("Updated!")
+                    st.rerun()
+                else:
+                    st.warning("Action cannot be empty.")
+    except Exception as error:
+        st.error(f"Unable to load Action Tracker: {error}")

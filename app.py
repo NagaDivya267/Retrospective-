@@ -416,6 +416,7 @@ with tab3:
                             user_input.strip(),
                         ])
                         st.success("✅ Response submitted!")
+                        st.rerun()
                     else:
                         st.warning("Please add something")
             else:
@@ -430,6 +431,7 @@ with tab4:
     try:
         config_sheet = get_or_create_worksheet(CONFIG_WORKSHEET_NAME, rows=20, cols=5)
         response_sheet = get_or_create_worksheet(RESPONSES_WORKSHEET_NAME, rows=500, cols=10)
+        discussion_sheet = get_or_create_worksheet("Discussions", rows=500, cols=5)
 
         # Load all response rows from Google Sheets.
         data = response_sheet.get_all_records()
@@ -470,5 +472,37 @@ with tab4:
                     for _, row in filtered_df.iterrows():
                         st.write(f"🟢 {row['Response']}")
                         st.write("---")
+
+                # ---- Capture Discussion Points ----
+                st.write("### 🧠 Capture Discussion Points")
+                discussion_input = st.text_area("Summarize team discussion for this question")
+
+                if st.button("Save Discussion"):
+                    if discussion_input.strip():
+                        # Ensure header row exists
+                        existing_header = discussion_sheet.row_values(1)
+                        if existing_header != ["Question", "Discussion"]:
+                            discussion_sheet.clear()
+                            discussion_sheet.append_row(["Question", "Discussion"])
+                        discussion_sheet.append_row([selected_question, discussion_input.strip()])
+                        st.success("Discussion saved!")
+                        st.rerun()
+                    else:
+                        st.warning("Please enter a discussion summary before saving.")
+
+                # ---- Show Saved Discussions ----
+                st.write("### 📌 Saved Discussion Points")
+                discussion_data = discussion_sheet.get_all_records()
+                if discussion_data:
+                    discussion_df = pd.DataFrame(discussion_data)
+                    filtered_discussion = discussion_df[
+                        discussion_df["Question"] == selected_question
+                    ]
+                    if filtered_discussion.empty:
+                        st.info("No discussion points saved for this question yet.")
+                    else:
+                        st.dataframe(filtered_discussion[["Discussion"]], use_container_width=True)
+                else:
+                    st.info("No discussion points saved yet.")
     except Exception as error:
         st.error(f"Unable to load Scrum Master dashboard: {error}")

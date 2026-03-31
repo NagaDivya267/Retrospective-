@@ -442,17 +442,217 @@ def mark_sync_event(label: str) -> None:
     st.session_state["last_sync_event"] = label
 
 
+RETRO_CATEGORY_WEIGHTS = {
+    "Delivery": 0.30,
+    "Quality": 0.25,
+    "Inventory": 0.20,
+    "Productivity": 0.15,
+    "People": 0.10,
+}
+
+RETRO_PRIORITY_ORDER = ["Delivery", "Quality", "Inventory", "Productivity", "People"]
+
+RETRO_CATEGORY_MAP = {
+    "Delivery": "5 Whys",
+    "Quality": "Fishbone",
+    "Inventory": "Sprint Detective",
+    "Productivity": "Metrics Retro",
+    "People": "Mad-Sad-Glad",
+}
+
+
+def normalize_column_name(name: str) -> str:
+    return "".join(ch.lower() for ch in str(name) if ch.isalnum())
+
+
+def find_matching_column(df: pd.DataFrame, aliases: list[str]) -> str | None:
+    alias_set = {normalize_column_name(alias) for alias in aliases}
+    for column in df.columns:
+        if normalize_column_name(column) in alias_set:
+            return column
+    return None
+
+
+def score_delivery(reliability_pct: float) -> int:
+    if reliability_pct >= 90:
+        return 100
+    if reliability_pct >= 75:
+        return 75
+    if reliability_pct >= 60:
+        return 50
+    return 30
+
+
+def score_quality(defect_increase_pct: float) -> int:
+    if defect_increase_pct <= 0:
+        return 100
+    if defect_increase_pct <= 10:
+        return 75
+    if defect_increase_pct <= 20:
+        return 50
+    return 30
+
+
+def score_inventory(spillover_pct: float) -> int:
+    if spillover_pct <= 10:
+        return 100
+    if spillover_pct <= 20:
+        return 75
+    if spillover_pct <= 30:
+        return 50
+    return 30
+
+
+def score_productivity(velocity_change_pct: float) -> int:
+    if velocity_change_pct >= 0:
+        return 100
+    if velocity_change_pct >= -10:
+        return 75
+    if velocity_change_pct >= -20:
+        return 50
+    return 30
+
+
+def normalize_people_score(morale_score: int) -> int:
+    people_map = {5: 100, 4: 80, 3: 60, 2: 40, 1: 20}
+    return people_map.get(int(morale_score), 60)
+
+
+def get_health_and_action(final_score: float) -> tuple[str, str]:
+    if final_score >= 85:
+        return "Excellent", "Start-Stop-Continue"
+    if final_score >= 70:
+        return "Good", "Metrics Retro"
+    if final_score >= 50:
+        return "Moderate Risk", "Sprint Detective"
+    if final_score >= 30:
+        return "High Risk", "5 Whys"
+    return "Critical", "5 Whys + Fishbone"
+
+
+def get_default_team_morale() -> int:
+    if "last_mood" in st.session_state:
+        try:
+            return max(1, min(5, int(st.session_state["last_mood"])))
+        except Exception:
+            pass
+
+    mood_history = st.session_state.get("mood_history", [])
+    if mood_history:
+        try:
+            avg_value = int(round(sum(float(v) for v in mood_history) / len(mood_history)))
+            return max(1, min(5, avg_value))
+        except Exception:
+            pass
+
+    return 3
+
+
+def prepare_retro_health_dataframe(source_df: pd.DataFrame) -> tuple[pd.DataFrame | None, list[str]]:
+    sprint_col = find_matching_column(source_df, ["Sprint Name", "Sprint"])
+    committed_col = find_matching_column(source_df, ["Committed SP", "Committed"])
+    completed_col = find_matching_column(source_df, ["Completed SP", "Completed"])
+    defects_col = find_matching_column(source_df, ["Defects #", "Defects", "Defect", "Defect Count"])
+
+    missing_fields: list[str] = []
+    if not sprint_col:
+        missing_fields.append("Sprint Name")
+    if not committed_col:
+        missing_fields.append("Committed SP")
+    if not completed_col:
+        missing_fields.append("Completed SP")
+    if not defects_col:
+        missing_fields.append("Defects #")
+
+    if missing_fields:
+        return None, missing_fields
+
+    retro_df = pd.DataFrame(
+        {
+            "Sprint Name": source_df[sprint_col].astype(str).str.strip(),
+            "Committed SP": pd.to_numeric(source_df[committed_col], errors="coerce").fillna(0),
+            "Completed SP": pd.to_numeric(source_df[completed_col], errors="coerce").fillna(0),
+            "Defects #": pd.to_numeric(source_df[defects_col], errors="coerce").fillna(0),
+        }
+    )
+
+    retro_df = retro_df[retro_df["Sprint Name"] != ""].copy()
+    retro_df = retro_df.reset_index(drop=True)
+
+    reliability_pct = []
+    spillover_pct = []
+    defect_increase_pct = []
+    velocity_change_pct = []
+
+    previous_defects = None
+    previous_velocity = None
+
+    for _, row in retro_df.iterrows():
+        committed = float(row["Committed SP"])
+        completed = float(row["Completed SP"])
+        defects = float(row["Defects #"])
+
+        reliability = (completed / committed) * 100 if committed > 0 else 0.0
+        spillover = ((committed - completed) / committed) * 100 if committed > 0 else 0.0
+
+        if previous_defects is None:
+            defect_increase = 0.0
+        elif previous_defects == 0:
+            defect_increase = 0.0
+        else:
+            defect_increase = ((defects - previous_defects) / previous_defects) * 100
+
+        if previous_velocity is None:
+            velocity_change = 0.0
+        elif previous_velocity == 0:
+            velocity_change = 0.0
+        else:
+            velocity_change = ((completed - previous_velocity) / previous_velocity) * 100
+
+        reliability_pct.append(reliability)
+        spillover_pct.append(spillover)
+        defect_increase_pct.append(defect_increase)
+        velocity_change_pct.append(velocity_change)
+
+        previous_defects = defects
+        previous_velocity = completed
+
+    retro_df["Reliability %"] = reliability_pct
+    retro_df["Spillover %"] = spillover_pct
+    retro_df["Defect Increase %"] = defect_increase_pct
+    retro_df["Velocity Change %"] = velocity_change_pct
+
+    retro_df["Delivery Score"] = retro_df["Reliability %"].apply(score_delivery)
+    retro_df["Quality Score"] = retro_df["Defect Increase %"].apply(score_quality)
+    retro_df["Inventory Score"] = retro_df["Spillover %"].apply(score_inventory)
+    retro_df["Productivity Score"] = retro_df["Velocity Change %"].apply(score_productivity)
+
+    return retro_df, []
+
+
+def pick_weakest_category(category_scores: dict[str, float]) -> str:
+    min_score = min(category_scores.values())
+    lowest_categories = [name for name, score in category_scores.items() if score == min_score]
+
+    for category in RETRO_PRIORITY_ORDER:
+        if category in lowest_categories:
+            return category
+
+    return lowest_categories[0]
+
+
 apply_pending_session_resets()
 
 
 # Create Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🎡 Spin Wheel",
     "👑 Dashboard",
     "🅳 DPM",
-    "📌 Action Tracker"
+    "📌 Action Tracker",
+    "🧠 AI Retro Health Game",
 ])
 
 with tab1:
@@ -1485,3 +1685,148 @@ Action Item | Priority
                         st.warning("Action cannot be empty.")
     except Exception as error:
         st.error(f"Unable to load Action Tracker: {error}")
+
+with tab7:
+    show_flash_message("retro_game")
+    st.subheader("🧠 AI Retro Health Game")
+    st.caption(
+        "Upload sprint data with Sprint Name, Committed SP, Completed SP, and Defects # to compute weighted health score and retro recommendations."
+    )
+
+    uploaded_game_file = st.file_uploader(
+        "Upload Sprint Data for Retro Health",
+        type=["csv", "xlsx"],
+        key="retro_health_file_uploader",
+    )
+
+    game_df = None
+    if uploaded_game_file:
+        try:
+            if uploaded_game_file.name.lower().endswith(".csv"):
+                game_df = pd.read_csv(uploaded_game_file)
+            else:
+                game_df = pd.read_excel(uploaded_game_file)
+        except Exception as error:
+            st.error(f"Unable to read uploaded file: {error}")
+
+    if game_df is None:
+        sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
+        if not sprint_df.empty:
+            fallback_df = sprint_df.copy()
+            if "Defects #" not in fallback_df.columns:
+                fallback_df["Defects #"] = 0
+            fallback_df = fallback_df.rename(
+                columns={
+                    "Sprint": "Sprint Name",
+                    "Committed": "Committed SP",
+                    "Completed": "Completed SP",
+                }
+            )
+            game_df = fallback_df
+            st.info("Using Sprint Insights data by default. Upload a CSV/XLSX file to override it.")
+
+    team_morale = st.slider(
+        "Team Morale (People category)",
+        min_value=1,
+        max_value=5,
+        value=get_default_team_morale(),
+        key="retro_health_team_morale",
+    )
+    people_score = normalize_people_score(team_morale)
+
+    if game_df is None or game_df.empty:
+        st.warning("Upload a CSV/XLSX file (or add Sprint Insights data) to calculate Retro Health score.")
+    else:
+        retro_df, missing_fields = prepare_retro_health_dataframe(game_df)
+
+        if retro_df is None:
+            st.error(
+                "Input data is missing required fields: "
+                + ", ".join(missing_fields)
+            )
+            st.caption(
+                "Accepted aliases: Sprint Name/Sprint, Committed SP/Committed, Completed SP/Completed, Defects #/Defects/Defect Count"
+            )
+        else:
+            retro_df = retro_df.tail(6).copy()
+            retro_df["People Score"] = people_score
+
+            retro_df["Final Score"] = (
+                retro_df["Delivery Score"] * RETRO_CATEGORY_WEIGHTS["Delivery"]
+                + retro_df["Quality Score"] * RETRO_CATEGORY_WEIGHTS["Quality"]
+                + retro_df["Inventory Score"] * RETRO_CATEGORY_WEIGHTS["Inventory"]
+                + retro_df["Productivity Score"] * RETRO_CATEGORY_WEIGHTS["Productivity"]
+                + retro_df["People Score"] * RETRO_CATEGORY_WEIGHTS["People"]
+            )
+
+            retro_df["Health"] = ""
+            retro_df["Recommended Retro"] = ""
+            for idx, row in retro_df.iterrows():
+                health, action = get_health_and_action(float(row["Final Score"]))
+                retro_df.at[idx, "Health"] = health
+                retro_df.at[idx, "Recommended Retro"] = action
+
+            st.write("### Scored Sprint View")
+            display_columns = [
+                "Sprint Name",
+                "Committed SP",
+                "Completed SP",
+                "Defects #",
+                "Reliability %",
+                "Spillover %",
+                "Defect Increase %",
+                "Velocity Change %",
+                "Delivery Score",
+                "Quality Score",
+                "Inventory Score",
+                "Productivity Score",
+                "People Score",
+                "Final Score",
+                "Health",
+                "Recommended Retro",
+            ]
+
+            st.dataframe(
+                retro_df[display_columns],
+                use_container_width=True,
+            )
+
+            latest_row = retro_df.iloc[-1]
+            category_scores = {
+                "Delivery": float(latest_row["Delivery Score"]),
+                "Quality": float(latest_row["Quality Score"]),
+                "Inventory": float(latest_row["Inventory Score"]),
+                "Productivity": float(latest_row["Productivity Score"]),
+                "People": float(latest_row["People Score"]),
+            }
+
+            weakest_category = pick_weakest_category(category_scores)
+            weakest_retro = RETRO_CATEGORY_MAP[weakest_category]
+
+            st.write("### Latest Sprint Summary")
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1.metric("Final Score", f"{float(latest_row['Final Score']):.2f}")
+            metric_col2.metric("Health", str(latest_row["Health"]))
+            metric_col3.metric("Overall Retro", str(latest_row["Recommended Retro"]))
+
+            st.write("### Weakest Category Logic")
+            st.write(
+                f"Weakest category (with tie-break priority Delivery > Quality > Inventory > Productivity > People): **{weakest_category}**"
+            )
+            st.write(f"Category-based retro recommendation: **{weakest_retro}**")
+
+            st.write("### Category Scores (Latest Sprint)")
+            category_df = pd.DataFrame(
+                {
+                    "Category": list(category_scores.keys()),
+                    "Score": list(category_scores.values()),
+                    "Weight": [
+                        "30%",
+                        "25%",
+                        "20%",
+                        "15%",
+                        "10%",
+                    ],
+                }
+            )
+            st.dataframe(category_df, use_container_width=True)

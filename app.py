@@ -682,12 +682,11 @@ apply_pending_session_resets()
 
 
 # Create Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🎡 Spin Wheel",
     "👑 Dashboard",
-    "🅳 DPM",
     "📌 Action Tracker",
     "🧠 AI Retro Health Game",
 ])
@@ -1317,97 +1316,6 @@ with tab4:
         st.error(f"Unable to load Scrum Master dashboard: {error}")
 
 with tab5:
-    show_flash_message("dpm")
-    st.subheader("🅳 Delivery Performance Metrics")
-
-    uploaded_file = st.file_uploader("Upload Sprint Data", type=["csv", "xlsx"], key="dpm_file_uploader")
-
-    df = None
-    if uploaded_file:
-        try:
-            if uploaded_file.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-        except Exception as error:
-            st.error(f"Unable to read uploaded file: {error}")
-
-    if df is None:
-        sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
-        if not sprint_df.empty:
-            st.info("Using Sprint Insights data. Upload a file to override it for DPM.")
-            df = sprint_df.copy()
-
-    if df is None or df.empty:
-        st.warning("Upload a CSV/XLSX file (or add Sprint Insights data) to view Delivery Performance Metrics.")
-    else:
-        required_cols = ["Sprint", "Committed", "Completed"]
-        missing_cols = [col for col in required_cols if col not in df.columns]
-
-        if missing_cols:
-            st.error(f"Data must contain columns: {', '.join(required_cols)}")
-            st.caption(f"Missing columns: {', '.join(missing_cols)}")
-        else:
-            dpm_df = df.copy()
-            dpm_df["Sprint"] = dpm_df["Sprint"].astype(str)
-            dpm_df["Committed"] = pd.to_numeric(dpm_df["Committed"], errors="coerce").fillna(0)
-            dpm_df["Completed"] = pd.to_numeric(dpm_df["Completed"], errors="coerce").fillna(0)
-            dpm_df = dpm_df.tail(6)
-
-            avg_velocity = dpm_df["Completed"].mean()
-            dpm_df["Color"] = dpm_df["Completed"].apply(
-                lambda value: "green" if value >= avg_velocity else "red"
-            )
-
-            # Render a D-shape view of the last six sprints by completed points.
-            import numpy as np
-            import matplotlib.pyplot as plt
-
-            fig, ax = plt.subplots()
-
-            theta = np.linspace(-np.pi / 2, np.pi / 2, len(dpm_df))
-            x = np.cos(theta)
-            y = np.sin(theta)
-
-            for index in range(len(dpm_df)):
-                sprint = dpm_df.iloc[index]
-
-                ax.text(
-                    x[index],
-                    y[index],
-                    f"{sprint['Sprint']}\n{int(round(sprint['Completed']))}",
-                    ha="center",
-                    va="center",
-                    bbox=dict(
-                        boxstyle="round,pad=0.4",
-                        facecolor=sprint["Color"],
-                        edgecolor="black",
-                    ),
-                    color="white",
-                )
-
-            ax.plot([-1, -1], [-1, 1], linewidth=3)
-            theta_curve = np.linspace(-np.pi / 2, np.pi / 2, 100)
-            ax.plot(np.cos(theta_curve), np.sin(theta_curve), linewidth=3)
-
-            ax.set_aspect("equal")
-            ax.axis("off")
-            st.pyplot(fig, use_container_width=True)
-
-            st.subheader("📊 Committed vs Completed")
-            chart_df = dpm_df.set_index("Sprint")[["Committed", "Completed"]]
-            st.bar_chart(chart_df)
-
-            st.markdown(
-                f"""
-                **Average Velocity:** {round(avg_velocity, 2)}
-
-                🟢 Above Avg Velocity  
-                🔴 Below Avg Velocity
-                """
-            )
-
-with tab6:
     show_flash_message("action")
     st.subheader("📌 Action Tracker")
 
@@ -1727,7 +1635,7 @@ Action Item | Priority
     except Exception as error:
         st.error(f"Unable to load Action Tracker: {error}")
 
-with tab7:
+with tab6:
     show_flash_message("retro_game")
     st.subheader("🧠 AI Retro Health Game")
     st.caption(
@@ -1758,7 +1666,7 @@ with tab7:
 
     st.write("### People Metric Source")
     if mood_by_sprint:
-        st.success("Using Mood Tracker entries matched by Sprint Name (PI or Sprint Name).")
+        st.success("Using Mood Tracker entries matched by Sprint Name (PI or Sprint Name), then previous sprint mood for missing values.")
     else:
         st.warning("No mood entries found in Mood Tracker. Falling back to latest mood/session default.")
         if mood_sheet_error:
@@ -1781,8 +1689,15 @@ with tab7:
             retro_df = retro_df.tail(6).copy()
             fallback_people_score = normalize_people_score(get_default_team_morale())
 
-            retro_df["People Mood (1-5)"] = retro_df["Sprint Name"].map(mood_by_sprint)
-            retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].fillna(float(get_default_team_morale()))
+            raw_people_mood = retro_df["Sprint Name"].map(mood_by_sprint)
+            carried_people_mood = raw_people_mood.ffill()
+            missing_after_carry = carried_people_mood.isna()
+
+            retro_df["People Mood (1-5)"] = carried_people_mood.fillna(float(get_default_team_morale()))
+            retro_df["People Mood Source"] = "Direct mood match"
+            retro_df.loc[raw_people_mood.isna(), "People Mood Source"] = "Previous sprint mood"
+            retro_df.loc[missing_after_carry, "People Mood Source"] = "Default mood fallback"
+
             retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].clip(lower=1, upper=5)
             retro_df["People Score"] = retro_df["People Mood (1-5)"].apply(
                 lambda value: normalize_people_score(int(round(float(value))))
@@ -1820,6 +1735,7 @@ with tab7:
                 "Inventory Score",
                 "Productivity Score",
                 "People Mood (1-5)",
+                "People Mood Source",
                 "People Score",
                 "Final Score",
                 "Health",

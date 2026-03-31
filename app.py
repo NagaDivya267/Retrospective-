@@ -734,17 +734,96 @@ def get_ai_retro_recommendation(category_scores: dict[str, float]) -> dict[str, 
     }
 
 
+def get_retro_health_analysis() -> dict | None:
+    sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
+    if sprint_df.empty:
+        return None
+
+    game_df = sprint_df.copy()
+    if "Defects #" not in game_df.columns:
+        game_df["Defects #"] = 0
+    game_df = game_df.rename(
+        columns={
+            "Sprint": "Sprint Name",
+            "Committed": "Committed SP",
+            "Completed": "Completed SP",
+        }
+    )
+
+    mood_sheet_error = ""
+    try:
+        mood_by_sprint = get_mood_score_by_sprint_name()
+    except Exception as error:
+        mood_by_sprint = {}
+        mood_sheet_error = str(error)
+
+    retro_df, missing_fields = prepare_retro_health_dataframe(game_df)
+    if retro_df is None:
+        return {
+            "error": "Input data is missing required fields: " + ", ".join(missing_fields),
+            "mood_sheet_error": mood_sheet_error,
+            "mood_by_sprint": mood_by_sprint,
+        }
+
+    retro_df = retro_df.tail(6).copy()
+    fallback_people_score = normalize_people_score(get_default_team_morale())
+
+    raw_people_mood = retro_df["Sprint Name"].map(mood_by_sprint)
+    carried_people_mood = raw_people_mood.ffill()
+    missing_after_carry = carried_people_mood.isna()
+
+    retro_df["People Mood (1-5)"] = carried_people_mood.fillna(float(get_default_team_morale()))
+    retro_df["People Mood Source"] = "Direct mood match"
+    retro_df.loc[raw_people_mood.isna(), "People Mood Source"] = "Previous sprint mood"
+    retro_df.loc[missing_after_carry, "People Mood Source"] = "Default mood fallback"
+
+    retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].clip(lower=1, upper=5)
+    retro_df["People Score"] = retro_df["People Mood (1-5)"].apply(
+        lambda value: normalize_people_score(int(round(float(value))))
+    )
+    if retro_df["People Score"].isna().all():
+        retro_df["People Score"] = fallback_people_score
+
+    retro_df["Final Score"] = (
+        retro_df["Delivery Score"] * RETRO_CATEGORY_WEIGHTS["Delivery"]
+        + retro_df["Quality Score"] * RETRO_CATEGORY_WEIGHTS["Quality"]
+        + retro_df["Inventory Score"] * RETRO_CATEGORY_WEIGHTS["Inventory"]
+        + retro_df["Productivity Score"] * RETRO_CATEGORY_WEIGHTS["Productivity"]
+        + retro_df["People Score"] * RETRO_CATEGORY_WEIGHTS["People"]
+    )
+
+    category_scores = {
+        "Delivery": float(retro_df["Delivery Score"].mean()),
+        "Quality": float(retro_df["Quality Score"].mean()),
+        "Inventory": float(retro_df["Inventory Score"].mean()),
+        "Productivity": float(retro_df["Productivity Score"].mean()),
+        "People": float(retro_df["People Score"].mean()),
+    }
+    ai_reco = get_ai_retro_recommendation(category_scores)
+
+    return {
+        "retro_df": retro_df,
+        "category_scores": category_scores,
+        "ai_reco": ai_reco,
+        "sprint_count": len(retro_df),
+        "mood_sheet_error": mood_sheet_error,
+        "mood_by_sprint": mood_by_sprint,
+    }
+
+
 apply_pending_session_resets()
+retro_analysis = get_retro_health_analysis()
+if retro_analysis and "ai_reco" in retro_analysis:
+    st.session_state["spin_recommended_retro"] = str(retro_analysis["ai_reco"]["recommended_retro"])
 
 
 # Create Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🎡 Spin Wheel",
     "👑 Dashboard",
     "📌 Action Tracker",
-    "🧠 AI Retro Health Game",
 ])
 
 with tab1:
@@ -1152,6 +1231,63 @@ with tab4:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
+
+    st.write("### AI Guided Retro")
+    retro_map_df = pd.DataFrame(
+        {
+            "Category": ["Delivery", "Quality", "Inventory", "Productivity", "People"],
+            "Retro": ["5 Whys", "Fishbone", "Sprint Detective", "Metrics Retro", "Mad-Sad-Glad"],
+        }
+    )
+    st.dataframe(retro_map_df, use_container_width=True)
+
+    if not retro_analysis:
+        st.info("Add Sprint Insights data to calculate average category scores and AI retro recommendation.")
+    elif "error" in retro_analysis:
+        st.warning(str(retro_analysis["error"]))
+    else:
+        category_scores = dict(retro_analysis["category_scores"])
+        ai_reco = dict(retro_analysis["ai_reco"])
+        sprint_count = int(retro_analysis["sprint_count"])
+        retro_df = retro_analysis["retro_df"]
+        mood_sheet_error = str(retro_analysis.get("mood_sheet_error", ""))
+        mood_by_sprint = retro_analysis.get("mood_by_sprint", {})
+
+        if mood_by_sprint:
+            st.caption("People metric uses Mood Tracker matched by sprint name, then previous sprint mood for missing values.")
+        elif mood_sheet_error:
+            st.caption(f"People metric fallback used because Mood Tracker read failed: {mood_sheet_error}")
+
+        st.write(f"### Category Scores (Average of {sprint_count} Sprints)")
+        category_df = pd.DataFrame(
+            {
+                "Category": list(category_scores.keys()),
+                "Score": [round(value, 2) for value in category_scores.values()],
+            }
+        )
+        st.dataframe(category_df, use_container_width=True)
+
+        st.write("### AI Recommendation")
+        reco_col1, reco_col2 = st.columns(2)
+        reco_col1.metric("Focus Area", ai_reco["focus_area"])
+        reco_col2.metric("Confidence", ai_reco["confidence"])
+        st.success(f"Recommended Retro: {ai_reco['recommended_retro']}")
+        st.info(f"Reason: {ai_reco['reason']}")
+
+        st.write("### Sprint KPI View")
+        display_columns = [
+            "Sprint Name",
+            "Committed SP",
+            "Completed SP",
+            "Defects #",
+            "Reliability %",
+            "Spillover %",
+            "Defect Increase %",
+            "Velocity Change %",
+            "People Mood (1-5)",
+            "People Mood Source",
+        ]
+        st.dataframe(retro_df[display_columns], use_container_width=True)
 
     try:
         config_sheet = get_or_create_worksheet(CONFIG_WORKSHEET_NAME, rows=20, cols=5)
@@ -1707,169 +1843,3 @@ Action Item | Priority
     except Exception as error:
         st.error(f"Unable to load Action Tracker: {error}")
 
-with tab6:
-    show_flash_message("retro_game")
-    st.subheader("🧠 AI Retro Health Game")
-    st.caption(
-        "Uses Sprint Insights data for delivery metrics and Mood tab data for People metric."
-    )
-
-    sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
-    game_df = None
-    if not sprint_df.empty:
-        fallback_df = sprint_df.copy()
-        if "Defects #" not in fallback_df.columns:
-            fallback_df["Defects #"] = 0
-        fallback_df = fallback_df.rename(
-            columns={
-                "Sprint": "Sprint Name",
-                "Committed": "Committed SP",
-                "Completed": "Completed SP",
-            }
-        )
-        game_df = fallback_df
-
-    mood_sheet_error = ""
-    try:
-        mood_by_sprint = get_mood_score_by_sprint_name()
-    except Exception as error:
-        mood_by_sprint = {}
-        mood_sheet_error = str(error)
-
-    st.write("### People Metric Source")
-    if mood_by_sprint:
-        st.success("Using Mood Tracker entries matched by Sprint Name (PI or Sprint Name), then previous sprint mood for missing values.")
-    else:
-        st.warning("No mood entries found in Mood Tracker. Falling back to latest mood/session default.")
-        if mood_sheet_error:
-            st.caption(f"Mood Tracker read skipped: {mood_sheet_error}")
-
-    if game_df is None or game_df.empty:
-        st.warning("Please add Sprint Insights data first in the Sprint Insights tab.")
-    else:
-        retro_df, missing_fields = prepare_retro_health_dataframe(game_df)
-
-        if retro_df is None:
-            st.error(
-                "Input data is missing required fields: "
-                + ", ".join(missing_fields)
-            )
-            st.caption(
-                "Accepted aliases: Sprint Name/Sprint, Committed SP/Committed, Completed SP/Completed, Defects #/Defects/Defect Count"
-            )
-        else:
-            retro_df = retro_df.tail(6).copy()
-            fallback_people_score = normalize_people_score(get_default_team_morale())
-
-            raw_people_mood = retro_df["Sprint Name"].map(mood_by_sprint)
-            carried_people_mood = raw_people_mood.ffill()
-            missing_after_carry = carried_people_mood.isna()
-
-            retro_df["People Mood (1-5)"] = carried_people_mood.fillna(float(get_default_team_morale()))
-            retro_df["People Mood Source"] = "Direct mood match"
-            retro_df.loc[raw_people_mood.isna(), "People Mood Source"] = "Previous sprint mood"
-            retro_df.loc[missing_after_carry, "People Mood Source"] = "Default mood fallback"
-
-            retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].clip(lower=1, upper=5)
-            retro_df["People Score"] = retro_df["People Mood (1-5)"].apply(
-                lambda value: normalize_people_score(int(round(float(value))))
-            )
-            if retro_df["People Score"].isna().all():
-                retro_df["People Score"] = fallback_people_score
-
-            retro_df["Final Score"] = (
-                retro_df["Delivery Score"] * RETRO_CATEGORY_WEIGHTS["Delivery"]
-                + retro_df["Quality Score"] * RETRO_CATEGORY_WEIGHTS["Quality"]
-                + retro_df["Inventory Score"] * RETRO_CATEGORY_WEIGHTS["Inventory"]
-                + retro_df["Productivity Score"] * RETRO_CATEGORY_WEIGHTS["Productivity"]
-                + retro_df["People Score"] * RETRO_CATEGORY_WEIGHTS["People"]
-            )
-
-            retro_df["Health"] = ""
-            retro_df["Recommended Retro"] = ""
-            for idx, row in retro_df.iterrows():
-                health, action = get_health_and_action(float(row["Final Score"]))
-                retro_df.at[idx, "Health"] = health
-                retro_df.at[idx, "Recommended Retro"] = action
-
-            st.write("### Scored Sprint View")
-            display_columns = [
-                "Sprint Name",
-                "Committed SP",
-                "Completed SP",
-                "Defects #",
-                "Reliability %",
-                "Spillover %",
-                "Defect Increase %",
-                "Velocity Change %",
-                "Delivery Score",
-                "Quality Score",
-                "Inventory Score",
-                "Productivity Score",
-                "People Mood (1-5)",
-                "People Mood Source",
-                "People Score",
-                "Final Score",
-                "Health",
-                "Recommended Retro",
-            ]
-
-            st.dataframe(
-                retro_df[display_columns],
-                use_container_width=True,
-            )
-
-            latest_row = retro_df.iloc[-1]
-            category_scores = {
-                "Delivery": float(latest_row["Delivery Score"]),
-                "Quality": float(latest_row["Quality Score"]),
-                "Inventory": float(latest_row["Inventory Score"]),
-                "Productivity": float(latest_row["Productivity Score"]),
-                "People": float(latest_row["People Score"]),
-            }
-
-            weakest_category = pick_weakest_category(category_scores)
-            weakest_retro = RETRO_CATEGORY_MAP[weakest_category]
-            ai_reco = get_ai_retro_recommendation(category_scores)
-            previous_retro = str(st.session_state.get("spin_recommended_retro", "")).strip()
-            current_retro = str(ai_reco["recommended_retro"]).strip()
-            st.session_state["spin_recommended_retro"] = current_retro
-
-            st.write("### Latest Sprint Summary")
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            metric_col1.metric("Final Score", f"{float(latest_row['Final Score']):.2f}")
-            metric_col2.metric("Health", str(latest_row["Health"]))
-            metric_col3.metric("Overall Retro", str(latest_row["Recommended Retro"]))
-
-            st.write("### Weakest Category Logic")
-            st.write(
-                f"Weakest category (with tie-break priority Delivery > Quality > Inventory > Productivity > People): **{weakest_category}**"
-            )
-            st.write(f"Category-based retro recommendation: **{weakest_retro}**")
-
-            st.write("### AI Recommendation")
-            reco_col1, reco_col2 = st.columns(2)
-            reco_col1.metric("Focus Area", ai_reco["focus_area"])
-            reco_col2.metric("Confidence", ai_reco["confidence"])
-            st.success(f"Recommended Retro: {ai_reco['recommended_retro']}")
-            st.info(f"Reason: {ai_reco['reason']}")
-
-            # Tab3 executes before Tab6 in the same run, so rerun once when the recommendation changes.
-            if current_retro and previous_retro != current_retro:
-                st.rerun()
-
-            st.write("### Category Scores (Latest Sprint)")
-            category_df = pd.DataFrame(
-                {
-                    "Category": list(category_scores.keys()),
-                    "Score": list(category_scores.values()),
-                    "Weight": [
-                        "30%",
-                        "25%",
-                        "20%",
-                        "15%",
-                        "10%",
-                    ],
-                }
-            )
-            st.dataframe(category_df, use_container_width=True)

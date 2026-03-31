@@ -818,9 +818,10 @@ if retro_analysis and "ai_reco" in retro_analysis:
 
 
 # Create Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
+    "🧠 AI Retro Game",
     "🎡 Spin Wheel",
     "👑 Dashboard",
     "📌 Action Tracker",
@@ -1059,6 +1060,67 @@ with tab2:
             st.success("✅ Stable scope")
 
 with tab3:
+    show_flash_message("retro_game")
+    st.subheader("🧠 AI Retro Game")
+
+    st.write("### Category To Retro Map")
+    retro_map_df = pd.DataFrame(
+        {
+            "Category": ["Delivery", "Quality", "Inventory", "Productivity", "People"],
+            "Retro": ["5 Whys", "Fishbone", "Sprint Detective", "Metrics Retro", "Mad-Sad-Glad"],
+        }
+    )
+    st.dataframe(retro_map_df, use_container_width=True)
+
+    if not retro_analysis:
+        st.info("Add Sprint Insights data to calculate average category scores and AI retro recommendation.")
+    elif "error" in retro_analysis:
+        st.warning(str(retro_analysis["error"]))
+    else:
+        category_scores = dict(retro_analysis["category_scores"])
+        ai_reco = dict(retro_analysis["ai_reco"])
+        sprint_count = int(retro_analysis["sprint_count"])
+        retro_df = retro_analysis["retro_df"]
+        mood_sheet_error = str(retro_analysis.get("mood_sheet_error", ""))
+        mood_by_sprint = retro_analysis.get("mood_by_sprint", {})
+
+        if mood_by_sprint:
+            st.caption("People metric uses Mood Tracker matched by sprint name, then previous sprint mood for missing values.")
+        elif mood_sheet_error:
+            st.caption(f"People metric fallback used because Mood Tracker read failed: {mood_sheet_error}")
+
+        st.write(f"### Category Scores (Average of {sprint_count} Sprints)")
+        category_df = pd.DataFrame(
+            {
+                "Category": list(category_scores.keys()),
+                "Score": [round(value, 2) for value in category_scores.values()],
+            }
+        )
+        st.dataframe(category_df, use_container_width=True)
+
+        st.write("### AI Recommendation")
+        reco_col1, reco_col2 = st.columns(2)
+        reco_col1.metric("Focus Area", ai_reco["focus_area"])
+        reco_col2.metric("Confidence", ai_reco["confidence"])
+        st.success(f"Recommended Retro: {ai_reco['recommended_retro']}")
+        st.info(f"Reason: {ai_reco['reason']}")
+
+        st.write("### Sprint KPI View")
+        display_columns = [
+            "Sprint Name",
+            "Committed SP",
+            "Completed SP",
+            "Defects #",
+            "Reliability %",
+            "Spillover %",
+            "Defect Increase %",
+            "Velocity Change %",
+            "People Mood (1-5)",
+            "People Mood Source",
+        ]
+        st.dataframe(retro_df[display_columns], use_container_width=True)
+
+with tab4:
     show_flash_message("spin")
     st.subheader("🎡 Spin the Retro Wheel")
 
@@ -1217,7 +1279,7 @@ with tab3:
     except Exception as error:
         st.error(f"Unable to load spin wheel data: {error}")
 
-with tab4:
+with tab5:
     show_flash_message("dashboard")
     st.subheader("👑 Scrum Master Dashboard")
 
@@ -1231,63 +1293,6 @@ with tab4:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
-
-    st.write("### AI Guided Retro")
-    retro_map_df = pd.DataFrame(
-        {
-            "Category": ["Delivery", "Quality", "Inventory", "Productivity", "People"],
-            "Retro": ["5 Whys", "Fishbone", "Sprint Detective", "Metrics Retro", "Mad-Sad-Glad"],
-        }
-    )
-    st.dataframe(retro_map_df, use_container_width=True)
-
-    if not retro_analysis:
-        st.info("Add Sprint Insights data to calculate average category scores and AI retro recommendation.")
-    elif "error" in retro_analysis:
-        st.warning(str(retro_analysis["error"]))
-    else:
-        category_scores = dict(retro_analysis["category_scores"])
-        ai_reco = dict(retro_analysis["ai_reco"])
-        sprint_count = int(retro_analysis["sprint_count"])
-        retro_df = retro_analysis["retro_df"]
-        mood_sheet_error = str(retro_analysis.get("mood_sheet_error", ""))
-        mood_by_sprint = retro_analysis.get("mood_by_sprint", {})
-
-        if mood_by_sprint:
-            st.caption("People metric uses Mood Tracker matched by sprint name, then previous sprint mood for missing values.")
-        elif mood_sheet_error:
-            st.caption(f"People metric fallback used because Mood Tracker read failed: {mood_sheet_error}")
-
-        st.write(f"### Category Scores (Average of {sprint_count} Sprints)")
-        category_df = pd.DataFrame(
-            {
-                "Category": list(category_scores.keys()),
-                "Score": [round(value, 2) for value in category_scores.values()],
-            }
-        )
-        st.dataframe(category_df, use_container_width=True)
-
-        st.write("### AI Recommendation")
-        reco_col1, reco_col2 = st.columns(2)
-        reco_col1.metric("Focus Area", ai_reco["focus_area"])
-        reco_col2.metric("Confidence", ai_reco["confidence"])
-        st.success(f"Recommended Retro: {ai_reco['recommended_retro']}")
-        st.info(f"Reason: {ai_reco['reason']}")
-
-        st.write("### Sprint KPI View")
-        display_columns = [
-            "Sprint Name",
-            "Committed SP",
-            "Completed SP",
-            "Defects #",
-            "Reliability %",
-            "Spillover %",
-            "Defect Increase %",
-            "Velocity Change %",
-            "People Mood (1-5)",
-            "People Mood Source",
-        ]
-        st.dataframe(retro_df[display_columns], use_container_width=True)
 
     try:
         config_sheet = get_or_create_worksheet(CONFIG_WORKSHEET_NAME, rows=20, cols=5)
@@ -1523,7 +1528,7 @@ with tab4:
     except Exception as error:
         st.error(f"Unable to load Scrum Master dashboard: {error}")
 
-with tab5:
+with tab6:
     show_flash_message("action")
     st.subheader("📌 Action Tracker")
 

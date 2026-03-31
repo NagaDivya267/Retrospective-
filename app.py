@@ -55,27 +55,36 @@ spin_questions = [
 ]
 
 
+def get_streamlit_secrets() -> dict:
+    """Safely return Streamlit secrets mapping, even when secrets.toml is absent."""
+    try:
+        return dict(st.secrets)
+    except Exception:
+        return {}
+
+
 def get_openai_api_key() -> tuple[str | None, str, list[str]]:
     """Resolve OpenAI API key across local env and multiple Streamlit secrets layouts."""
+    secrets = get_streamlit_secrets()
     candidates: list[tuple[str | None, str]] = [
         (os.getenv("OPENAI_API_KEY"), "env:OPENAI_API_KEY"),
     ]
 
     secret_keys: list[str] = []
     try:
-        secret_keys = list(st.secrets.keys())
+        secret_keys = list(secrets.keys())
     except Exception:
         secret_keys = []
 
-    if "OPENAI_API_KEY" in st.secrets:
-        candidates.append((st.secrets.get("OPENAI_API_KEY"), "secrets:OPENAI_API_KEY"))
-    if "openai_api_key" in st.secrets:
-        candidates.append((st.secrets.get("openai_api_key"), "secrets:openai_api_key"))
-    if "api_key" in st.secrets:
-        candidates.append((st.secrets.get("api_key"), "secrets:api_key"))
+    if "OPENAI_API_KEY" in secrets:
+        candidates.append((secrets.get("OPENAI_API_KEY"), "secrets:OPENAI_API_KEY"))
+    if "openai_api_key" in secrets:
+        candidates.append((secrets.get("openai_api_key"), "secrets:openai_api_key"))
+    if "api_key" in secrets:
+        candidates.append((secrets.get("api_key"), "secrets:api_key"))
 
-    if "openai" in st.secrets:
-        openai_section = st.secrets["openai"]
+    if "openai" in secrets:
+        openai_section = secrets["openai"]
         if hasattr(openai_section, "get"):
             candidates.extend(
                 [
@@ -99,7 +108,7 @@ def get_openai_api_key() -> tuple[str | None, str, list[str]]:
                 discovered.extend(scan_mapping(value, path))
         return discovered
 
-    candidates.extend(scan_mapping(st.secrets))
+    candidates.extend(scan_mapping(secrets))
 
     for value, source in candidates:
         if value and str(value).strip():
@@ -177,9 +186,11 @@ def get_credentials_file_path() -> str:
 
 @st.cache_resource(show_spinner=False)
 def get_google_workbook():
-    if "gcp_service_account" in st.secrets:
+    secrets = get_streamlit_secrets()
+
+    if "gcp_service_account" in secrets:
         credentials = Credentials.from_service_account_info(
-            dict(st.secrets["gcp_service_account"]),
+            dict(secrets["gcp_service_account"]),
             scopes=GOOGLE_SHEETS_SCOPE,
         )
     else:
@@ -548,6 +559,32 @@ def get_default_team_morale() -> int:
     return 3
 
 
+def get_mood_score_by_sprint_name() -> dict[str, float]:
+    mood_records = get_sheet_records(MOOD_WORKSHEET_NAME, rows=500, cols=10)
+    if not mood_records:
+        return {}
+
+    mood_df = pd.DataFrame(mood_records)
+    required_cols = {"PI or Sprint Name", "Average Mood Score"}
+    if not required_cols.issubset(set(mood_df.columns)):
+        return {}
+
+    mood_df = mood_df.copy()
+    mood_df["PI or Sprint Name"] = mood_df["PI or Sprint Name"].astype(str).str.strip()
+    mood_df["Average Mood Score"] = pd.to_numeric(mood_df["Average Mood Score"], errors="coerce")
+    mood_df = mood_df.dropna(subset=["Average Mood Score"])
+    mood_df = mood_df[mood_df["PI or Sprint Name"] != ""]
+
+    if mood_df.empty:
+        return {}
+
+    grouped = mood_df.groupby("PI or Sprint Name", as_index=False)["Average Mood Score"].mean()
+    return {
+        str(row["PI or Sprint Name"]): float(row["Average Mood Score"])
+        for _, row in grouped.iterrows()
+    }
+
+
 def prepare_retro_health_dataframe(source_df: pd.DataFrame) -> tuple[pd.DataFrame | None, list[str]]:
     sprint_col = find_matching_column(source_df, ["Sprint Name", "Sprint"])
     committed_col = find_matching_column(source_df, ["Committed SP", "Committed"])
@@ -738,7 +775,7 @@ with tab2:
     show_flash_message("sprint")
     st.subheader("Sprint Insights Tracker")
 
-    sprint_columns = ["Sprint", "Committed", "Completed", "Scope Added", "Spill Over"]
+    sprint_columns = ["Sprint", "Committed", "Completed", "Scope Added", "Defects #", "Spill Over"]
 
     # Initialize storage
     if "sprint_df" not in st.session_state:
@@ -760,6 +797,8 @@ with tab2:
 
         required_cols = ["Sprint", "Committed", "Completed", "Scope Added"]
         if all(col in df_uploaded.columns for col in required_cols):
+            if "Defects #" not in df_uploaded.columns:
+                df_uploaded["Defects #"] = 0
             st.session_state.sprint_df = ensure_spill_over_column(df_uploaded.tail(6)).reindex(columns=sprint_columns)
             st.success("CSV uploaded successfully!")
         else:
@@ -772,6 +811,7 @@ with tab2:
     committed = st.number_input("Committed Story Points", min_value=0, key="committed_input")
     completed = st.number_input("Completed Story Points", min_value=0, key="completed_input")
     scope_added = st.number_input("Scope Added", min_value=0, key="scope_added_input")
+    defects = st.number_input("Defects #", min_value=0, key="defects_input")
 
     if st.button("Add Sprint"):
         if sprint_name:
@@ -779,7 +819,8 @@ with tab2:
                 "Sprint": sprint_name,
                 "Committed": committed,
                 "Completed": completed,
-                "Scope Added": scope_added
+                "Scope Added": scope_added,
+                "Defects #": defects,
             }])
 
             st.session_state.sprint_df = pd.concat(
@@ -787,7 +828,7 @@ with tab2:
                 ignore_index=True
             ).tail(6)
             st.session_state.sprint_df = ensure_spill_over_column(st.session_state.sprint_df).reindex(columns=sprint_columns)
-            clear_session_keys("sprint_name_input", "committed_input", "completed_input", "scope_added_input")
+            clear_session_keys("sprint_name_input", "committed_input", "completed_input", "scope_added_input", "defects_input")
             set_flash_message("sprint", "success", "Sprint added successfully!")
             st.rerun()
 
@@ -1690,52 +1731,41 @@ with tab7:
     show_flash_message("retro_game")
     st.subheader("🧠 AI Retro Health Game")
     st.caption(
-        "Upload sprint data with Sprint Name, Committed SP, Completed SP, and Defects # to compute weighted health score and retro recommendations."
+        "Uses Sprint Insights data for delivery metrics and Mood tab data for People metric."
     )
 
-    uploaded_game_file = st.file_uploader(
-        "Upload Sprint Data for Retro Health",
-        type=["csv", "xlsx"],
-        key="retro_health_file_uploader",
-    )
-
+    sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
     game_df = None
-    if uploaded_game_file:
-        try:
-            if uploaded_game_file.name.lower().endswith(".csv"):
-                game_df = pd.read_csv(uploaded_game_file)
-            else:
-                game_df = pd.read_excel(uploaded_game_file)
-        except Exception as error:
-            st.error(f"Unable to read uploaded file: {error}")
+    if not sprint_df.empty:
+        fallback_df = sprint_df.copy()
+        if "Defects #" not in fallback_df.columns:
+            fallback_df["Defects #"] = 0
+        fallback_df = fallback_df.rename(
+            columns={
+                "Sprint": "Sprint Name",
+                "Committed": "Committed SP",
+                "Completed": "Completed SP",
+            }
+        )
+        game_df = fallback_df
 
-    if game_df is None:
-        sprint_df = st.session_state.get("sprint_df", pd.DataFrame())
-        if not sprint_df.empty:
-            fallback_df = sprint_df.copy()
-            if "Defects #" not in fallback_df.columns:
-                fallback_df["Defects #"] = 0
-            fallback_df = fallback_df.rename(
-                columns={
-                    "Sprint": "Sprint Name",
-                    "Committed": "Committed SP",
-                    "Completed": "Completed SP",
-                }
-            )
-            game_df = fallback_df
-            st.info("Using Sprint Insights data by default. Upload a CSV/XLSX file to override it.")
+    mood_sheet_error = ""
+    try:
+        mood_by_sprint = get_mood_score_by_sprint_name()
+    except Exception as error:
+        mood_by_sprint = {}
+        mood_sheet_error = str(error)
 
-    team_morale = st.slider(
-        "Team Morale (People category)",
-        min_value=1,
-        max_value=5,
-        value=get_default_team_morale(),
-        key="retro_health_team_morale",
-    )
-    people_score = normalize_people_score(team_morale)
+    st.write("### People Metric Source")
+    if mood_by_sprint:
+        st.success("Using Mood Tracker entries matched by Sprint Name (PI or Sprint Name).")
+    else:
+        st.warning("No mood entries found in Mood Tracker. Falling back to latest mood/session default.")
+        if mood_sheet_error:
+            st.caption(f"Mood Tracker read skipped: {mood_sheet_error}")
 
     if game_df is None or game_df.empty:
-        st.warning("Upload a CSV/XLSX file (or add Sprint Insights data) to calculate Retro Health score.")
+        st.warning("Please add Sprint Insights data first in the Sprint Insights tab.")
     else:
         retro_df, missing_fields = prepare_retro_health_dataframe(game_df)
 
@@ -1749,7 +1779,16 @@ with tab7:
             )
         else:
             retro_df = retro_df.tail(6).copy()
-            retro_df["People Score"] = people_score
+            fallback_people_score = normalize_people_score(get_default_team_morale())
+
+            retro_df["People Mood (1-5)"] = retro_df["Sprint Name"].map(mood_by_sprint)
+            retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].fillna(float(get_default_team_morale()))
+            retro_df["People Mood (1-5)"] = retro_df["People Mood (1-5)"].clip(lower=1, upper=5)
+            retro_df["People Score"] = retro_df["People Mood (1-5)"].apply(
+                lambda value: normalize_people_score(int(round(float(value))))
+            )
+            if retro_df["People Score"].isna().all():
+                retro_df["People Score"] = fallback_people_score
 
             retro_df["Final Score"] = (
                 retro_df["Delivery Score"] * RETRO_CATEGORY_WEIGHTS["Delivery"]
@@ -1780,6 +1819,7 @@ with tab7:
                 "Quality Score",
                 "Inventory Score",
                 "Productivity Score",
+                "People Mood (1-5)",
                 "People Score",
                 "Final Score",
                 "Health",

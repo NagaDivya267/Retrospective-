@@ -524,16 +524,14 @@ def render_interactive_fishbone(
     data: dict[str, list[FishboneCause]],
         root_category: str | None = None,
     root_cause_id: str | None = None,
-    voted_cause_ids: set[str] | None = None,
 ) -> None:
-        """Render a vote-aware fishbone in HTML/CSS/JS without Graphviz dependency."""
+    """Render a fishbone in HTML/CSS/JS without Graphviz dependency."""
         payload_json = json.dumps(
                 {
                         "problem": problem or "Problem",
                         "data": data,
                         "root": root_category,
                         "rootCauseId": root_cause_id,
-                    "votedCauseIds": sorted(voted_cause_ids or set()),
                 }
         ).replace("</", "<\\/")
 
@@ -624,25 +622,6 @@ def render_interactive_fishbone(
                 color: #bfdbfe;
                 border: 1px solid rgba(96, 165, 250, 0.25);
             }}
-            .vote-btn {{
-                margin-left: 8px;
-                border: 1px solid rgba(148, 163, 184, 0.4);
-                background: rgba(30, 41, 59, 0.9);
-                color: #e2e8f0;
-                border-radius: 8px;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 3px 8px;
-                cursor: pointer;
-                white-space: nowrap;
-            }}
-            .vote-btn:hover {{
-                background: rgba(51, 65, 85, 0.95);
-            }}
-            .vote-btn:disabled {{
-                cursor: not-allowed;
-                opacity: 0.6;
-            }}
             .badge {{
                 display:inline-flex;
                 margin-left:6px;
@@ -685,7 +664,7 @@ def render_interactive_fishbone(
             <div class="bone bottom b2" data-cat="2"></div>
             <div class="bone bottom b3" data-cat="3"></div>
 
-            <div class="footer">Vote directly on each cause card. Buttons below remain available as fallback.</div>
+            <div class="footer">Use the vote section below to record team votes.</div>
         </div>
 
         <script>
@@ -693,7 +672,6 @@ def render_interactive_fishbone(
             const categories = Object.keys(payload.data || {{}});
             const root = payload.root;
             const rootCauseId = payload.rootCauseId;
-            const votedCauseIds = new Set(payload.votedCauseIds || []);
             const head = document.getElementById("head");
             head.textContent = payload.problem || "Problem";
 
@@ -732,30 +710,6 @@ def render_interactive_fishbone(
                         votePill.className = "vote-pill";
                         votePill.textContent = `👍 ${{c.votes || 0}}`;
                         el.appendChild(votePill);
-
-                        const voteButton = document.createElement("button");
-                        voteButton.className = "vote-btn";
-                        const alreadyVoted = votedCauseIds.has(c.id);
-                        voteButton.type = "button";
-                        voteButton.textContent = alreadyVoted ? "Voted" : "Vote";
-                        if (alreadyVoted) {{
-                            voteButton.disabled = true;
-                        }} else {{
-                            voteButton.addEventListener("click", () => {{
-                                try {{
-                                    const topWindow = window.top || window.parent || window;
-                                    const nextUrl = new URL(topWindow.location.href);
-                                    nextUrl.searchParams.set("fb_vote", c.id);
-                                    nextUrl.searchParams.set("fb_tick", String(Date.now()));
-                                    nextUrl.hash = "fishbone-analysis";
-                                    topWindow.location.assign(nextUrl.toString());
-                                }} catch (_error) {{
-                                    const fallbackUrl = `?fb_vote=${{encodeURIComponent(c.id)}}&fb_tick=${{Date.now()}}#fishbone-analysis`;
-                                    window.location.assign(fallbackUrl);
-                                }}
-                            }});
-                        }}
-                        el.appendChild(voteButton);
 
                         if (root && cat === root && rootCauseId && c.id === rootCauseId) {{
                             const badge = document.createElement("span");
@@ -2212,42 +2166,6 @@ with tab7:
     else:
         st.session_state.fishbone_user_votes = {str(cause_id) for cause_id in st.session_state.fishbone_user_votes}
 
-    raw_vote_param = st.query_params.get("fb_vote", "")
-    if isinstance(raw_vote_param, list):
-        vote_from_diagram = str(raw_vote_param[0]).strip() if raw_vote_param else ""
-    else:
-        vote_from_diagram = str(raw_vote_param).strip()
-    if vote_from_diagram:
-        vote_found = False
-        already_voted_here = False
-
-        for cat in categories:
-            for cause in st.session_state.fishbone_data.get(cat, []):
-                if cause["id"] != vote_from_diagram:
-                    continue
-
-                vote_found = True
-                if cause["id"] in st.session_state.fishbone_user_votes:
-                    already_voted_here = True
-                else:
-                    cause["votes"] += 1
-                    st.session_state.fishbone_user_votes.add(cause["id"])
-                break
-            if vote_found:
-                break
-
-        for query_key in ["fb_vote", "fb_tick"]:
-            try:
-                del st.query_params[query_key]
-            except Exception:
-                pass
-
-        if vote_found and not already_voted_here:
-            set_flash_message("fishbone", "success", "Vote recorded from fishbone diagram.")
-            st.rerun()
-        if vote_found and already_voted_here:
-            st.info("You already voted for this cause in this session.")
-
     # -------------------------
     # Add Causes (Interactive)
     # -------------------------
@@ -2376,7 +2294,6 @@ Category: cause1, cause2
         st.session_state.fishbone_data,
         root_category,
         root_cause["id"] if root_cause else None,
-        st.session_state.fishbone_user_votes,
     )
 
     if root_category and root_cause:
@@ -2388,7 +2305,7 @@ Category: cause1, cause2
     # Voting
     # -------------------------
     st.write("### 👍 Vote on Causes")
-    st.caption("You can vote from the fishbone cards above or use the buttons below.")
+    st.caption("Use the vote buttons below to collect team votes.")
 
     if all_causes:
         for cat in categories:

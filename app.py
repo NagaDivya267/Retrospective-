@@ -481,14 +481,14 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
             .fb-container {{
                 position: relative;
                 width: 100%;
-                height: 460px;
+                height: 500px;
                 font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
                 background: #0f172a;
                 border-radius: 16px;
                 overflow: hidden;
             }}
             .spine {{
-                position:absolute; top:50%; left:6%; width:78%; height:4px; background:#e5e7eb;
+                position:absolute; top:50%; left:7%; width:74%; height:4px; background:#e5e7eb;
             }}
             .head {{
                 position:absolute; right:4%; top:42%;
@@ -499,7 +499,7 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
                 text-wrap: balance;
             }}
             .bone {{
-                position:absolute; width:18%; color:#e5e7eb;
+                position:absolute; width:21%; color:#e5e7eb;
             }}
             .bone .title {{
                 font-weight:700; margin-bottom:6px; opacity:.95;
@@ -518,14 +518,19 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
                 display:inline-block; margin-left:6px; font-size:10px; padding:2px 6px;
                 border-radius:999px; background:#22c55e; color:#052e16;
             }}
-            .bone.top {{ transform: rotate(-28deg); transform-origin:left center; }}
-            .bone.bottom {{ transform: rotate(28deg); transform-origin:left center; }}
+            .more-causes {{
+                margin-top: 5px;
+                font-size: 11px;
+                color: #cbd5e1;
+                opacity: 0.9;
+            }}
+            .bone.top {{ transform: rotate(-24deg); transform-origin:left center; }}
+            .bone.bottom {{ transform: rotate(24deg); transform-origin:left center; }}
 
-            .b0 {{ left:8%; top:18%; }}
-            .b1 {{ left:26%; top:10%; }}
-            .b2 {{ left:44%; top:18%; }}
-            .b3 {{ left:8%; top:66%; }}
-            .b4 {{ left:26%; top:74%; }}
+            .b0 {{ left:10%; top:19%; }}
+            .b1 {{ left:37%; top:11%; }}
+            .b2 {{ left:10%; top:62%; }}
+            .b3 {{ left:37%; top:70%; }}
 
             .footer {{
                 position:absolute; bottom:8px; left:12px; color:#9ca3af; font-size:12px;
@@ -538,9 +543,8 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
 
             <div class="bone top b0" data-cat="0"></div>
             <div class="bone top b1" data-cat="1"></div>
-            <div class="bone top b2" data-cat="2"></div>
+            <div class="bone bottom b2" data-cat="2"></div>
             <div class="bone bottom b3" data-cat="3"></div>
-            <div class="bone bottom b4" data-cat="4"></div>
 
             <div class="footer">Tip: click a cause to edit/delete in this preview. Main list remains the source of truth.</div>
         </div>
@@ -568,7 +572,8 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
                     b.appendChild(title);
 
                     const causes = payload.data[cat] || [];
-                    causes.slice(0, 4).forEach((c, i) => {{
+                    const visibleCauses = causes.slice(0, 5);
+                    visibleCauses.forEach((c, i) => {{
                         const el = document.createElement("div");
                         el.className = "cause";
                         el.textContent = c;
@@ -596,13 +601,20 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
                         }};
                         b.appendChild(el);
                     }});
+
+                    if (causes.length > visibleCauses.length) {{
+                        const more = document.createElement("div");
+                        more.className = "more-causes";
+                        more.textContent = `+${{causes.length - visibleCauses.length}} more`;
+                        b.appendChild(more);
+                    }}
                 }});
             }}
             render();
         </script>
         """
 
-        components.html(html, height=480)
+        components.html(html, height=520)
 
 
 def ensure_spill_over_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -2018,15 +2030,16 @@ with tab7:
     # -------------------------
     # Categories
     # -------------------------
-    categories = ["People", "Process", "Tools", "Requirements", "Dependencies"]
+    categories = ["People", "Process", "Tools", "Dependencies"]
 
     if "fishbone_data" not in st.session_state:
         st.session_state.fishbone_data = {cat: [] for cat in categories}
-
-    # Keep categories aligned when list changes.
-    for cat in categories:
-        if cat not in st.session_state.fishbone_data:
-            st.session_state.fishbone_data[cat] = []
+    else:
+        # Keep only supported categories and preserve existing entries for them.
+        existing_data = st.session_state.fishbone_data
+        st.session_state.fishbone_data = {
+            cat: list(existing_data.get(cat, [])) for cat in categories
+        }
 
     # -------------------------
     # Add Causes (Interactive)
@@ -2094,7 +2107,7 @@ with tab7:
 Problem: {problem}
 
 Suggest root causes under:
-People, Process, Tools, Requirements, Dependencies
+People, Process, Tools, Dependencies
 
 Format:
 Category: cause1, cause2
@@ -2140,7 +2153,7 @@ Category: cause1, cause2
     if st.button("Find Root Cause", key="fishbone_find_root_cause"):
         if any(len(st.session_state.fishbone_data[cat]) > 0 for cat in categories):
             max_cat = max(
-                st.session_state.fishbone_data,
+                categories,
                 key=lambda k: len(st.session_state.fishbone_data[k]),
             )
             st.success(f"Primary Problem Area: {max_cat}")
@@ -2154,7 +2167,8 @@ Category: cause1, cause2
 
     if st.button("Generate Actions from Fishbone", key="fishbone_generate_actions"):
         all_causes = []
-        for cat, causes in st.session_state.fishbone_data.items():
+        for cat in categories:
+            causes = st.session_state.fishbone_data.get(cat, [])
             for cause in causes:
                 all_causes.append(f"{cat}: {cause}")
 

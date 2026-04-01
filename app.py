@@ -466,6 +466,145 @@ def render_question_timer(question: str, duration_seconds: int, timer_reset_key:
     )
 
 
+def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_category: str | None = None) -> None:
+        """Render an interactive fishbone in HTML/CSS/JS without Graphviz dependency."""
+        payload_json = json.dumps(
+                {
+                        "problem": problem,
+                        "data": data,
+                        "root": root_category,
+                }
+        ).replace("</", "<\\/")
+
+        html = f"""
+        <style>
+            .fb-container {{
+                position: relative;
+                width: 100%;
+                height: 460px;
+                font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+                background: #0f172a;
+                border-radius: 16px;
+                overflow: hidden;
+            }}
+            .spine {{
+                position:absolute; top:50%; left:6%; width:78%; height:4px; background:#e5e7eb;
+            }}
+            .head {{
+                position:absolute; right:4%; top:42%;
+                padding:10px 16px; border-radius:10px; color:white; font-weight:600;
+                background: linear-gradient(135deg,#ef4444,#f97316);
+                box-shadow: 0 6px 20px rgba(0,0,0,.25);
+                max-width: 26%;
+                text-wrap: balance;
+            }}
+            .bone {{
+                position:absolute; width:18%; color:#e5e7eb;
+            }}
+            .bone .title {{
+                font-weight:700; margin-bottom:6px; opacity:.95;
+            }}
+            .bone.root .title {{
+                color:#fca5a5;
+            }}
+            .cause {{
+                font-size:12px; margin:4px 0; padding:4px 6px;
+                border-radius:6px; background:#111827; border:1px solid #374151;
+                cursor:pointer;
+                word-break: break-word;
+            }}
+            .cause:hover {{ background:#1f2937; }}
+            .badge {{
+                display:inline-block; margin-left:6px; font-size:10px; padding:2px 6px;
+                border-radius:999px; background:#22c55e; color:#052e16;
+            }}
+            .bone.top {{ transform: rotate(-28deg); transform-origin:left center; }}
+            .bone.bottom {{ transform: rotate(28deg); transform-origin:left center; }}
+
+            .b0 {{ left:8%; top:18%; }}
+            .b1 {{ left:26%; top:10%; }}
+            .b2 {{ left:44%; top:18%; }}
+            .b3 {{ left:8%; top:66%; }}
+            .b4 {{ left:26%; top:74%; }}
+
+            .footer {{
+                position:absolute; bottom:8px; left:12px; color:#9ca3af; font-size:12px;
+            }}
+        </style>
+
+        <div class="fb-container" id="fb">
+            <div class="spine"></div>
+            <div class="head" id="head"></div>
+
+            <div class="bone top b0" data-cat="0"></div>
+            <div class="bone top b1" data-cat="1"></div>
+            <div class="bone top b2" data-cat="2"></div>
+            <div class="bone bottom b3" data-cat="3"></div>
+            <div class="bone bottom b4" data-cat="4"></div>
+
+            <div class="footer">Tip: click a cause to edit/delete in this preview. Main list remains the source of truth.</div>
+        </div>
+
+        <script>
+            const payload = {payload_json};
+            const categories = Object.keys(payload.data || {{}});
+            const root = payload.root;
+            const head = document.getElementById("head");
+            head.textContent = payload.problem || "Problem";
+
+            function render() {{
+                const bones = document.querySelectorAll(".bone");
+                bones.forEach((b, idx) => {{
+                    const cat = categories[idx];
+                    b.innerHTML = "";
+                    b.classList.remove("root");
+                    if (!cat) return;
+
+                    if (root && cat === root) b.classList.add("root");
+
+                    const title = document.createElement("div");
+                    title.className = "title";
+                    title.textContent = cat;
+                    b.appendChild(title);
+
+                    const causes = payload.data[cat] || [];
+                    causes.slice(0, 4).forEach((c, i) => {{
+                        const el = document.createElement("div");
+                        el.className = "cause";
+                        el.textContent = c;
+
+                        if (root && cat === root) {{
+                            const badge = document.createElement("span");
+                            badge.className = "badge";
+                            badge.textContent = "focus";
+                            el.appendChild(badge);
+                        }}
+
+                        el.onclick = () => {{
+                            const action = prompt("Edit cause (leave empty to delete):", c);
+                            if (action === null) return;
+                            if (action.trim() === "") {{
+                                payload.data[cat].splice(i, 1);
+                            }} else {{
+                                payload.data[cat][i] = action.trim();
+                            }}
+                            render();
+                            window.parent.postMessage({{
+                                type: "fishbone_update",
+                                data: payload.data
+                            }}, "*");
+                        }};
+                        b.appendChild(el);
+                    }});
+                }});
+            }}
+            render();
+        </script>
+        """
+
+        components.html(html, height=480)
+
+
 def ensure_spill_over_column(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if all(col in df.columns for col in ["Committed", "Scope Added", "Completed"]):
@@ -1894,6 +2033,15 @@ with tab7:
     # -------------------------
     st.write("### ➕ Add Causes")
 
+    quick_col1, quick_col2, quick_col3 = st.columns([2, 2, 1])
+    quick_category = quick_col1.selectbox("Category", categories, key="fishbone_quick_category")
+    quick_cause_text = quick_col2.text_input("Cause", key="fishbone_quick_cause")
+    if quick_col3.button("Add Cause", key="fishbone_quick_add"):
+        if quick_cause_text.strip():
+            st.session_state.fishbone_data[quick_category].append(quick_cause_text.strip())
+            clear_session_keys("fishbone_quick_cause")
+            st.rerun()
+
     utility_col1, utility_col2 = st.columns([1, 1])
     if utility_col1.button("🧹 Clear All Causes", key="fishbone_clear_all"):
         st.session_state.fishbone_data = {cat: [] for cat in categories}
@@ -1965,59 +2113,24 @@ Category: cause1, cause2
                 st.error(f"Unable to generate AI suggestions: {ai_error}")
 
     # -------------------------
-    # Graphviz Fishbone Diagram
+    # Interactive Fishbone Diagram
     # -------------------------
     st.write("### 🐟 Fishbone Diagram")
 
-    def _dot_escape(value: str) -> str:
-        return str(value).replace("\\", "\\\\").replace('"', '\\"')
-
-    def _dot_multiline(value: str, width: int = 24) -> str:
-        wrapped_value = textwrap.fill(str(value), width=width)
-        return _dot_escape(wrapped_value).replace("\n", "\\n")
-
-    diagram_density = st.select_slider(
-        "Diagram Spacing",
-        options=["Compact", "Balanced", "Comfortable"],
-        value="Comfortable",
-        key="fishbone_diagram_density",
-    )
-
-    spacing_map = {
-        "Compact": (0.5, 0.8),
-        "Balanced": (0.8, 1.1),
-        "Comfortable": (1.1, 1.5),
+    category_counts = {
+        cat: len(st.session_state.fishbone_data.get(cat, []))
+        for cat in categories
     }
-    nodesep, ranksep = spacing_map.get(diagram_density, (1.1, 1.5))
+    root_category = max(category_counts, key=category_counts.get) if category_counts else None
+    if root_category and category_counts[root_category] == 0:
+        root_category = None
 
-    problem_safe = _dot_multiline(problem, width=28)
-    dot_lines = [
-        "digraph Fishbone {",
-        "rankdir=LR;",
-        f"graph [nodesep={nodesep}, ranksep={ranksep}, splines=true, pad=0.3];",
-        "node [fontname=Helvetica, fontsize=12, margin=0.15];",
-        "edge [penwidth=1.2, color=gray35];",
-        f'Problem [label="{problem_safe}", shape=box, style="filled,rounded", fillcolor="#fca5a5", color="#b91c1c", penwidth=1.6];',
-    ]
+    render_interactive_fishbone(problem, st.session_state.fishbone_data, root_category)
 
-    for i, (cat, causes) in enumerate(st.session_state.fishbone_data.items()):
-        cat_node = f"cat_{i}"
-        cat_safe = _dot_multiline(cat, width=16)
-        dot_lines.append(
-            f'{cat_node} [label="{cat_safe}", shape=ellipse, style=filled, fillcolor="#bfdbfe", color="#1d4ed8", penwidth=1.4];'
-        )
-        dot_lines.append(f"{cat_node} -> Problem;")
-
-        for j, cause in enumerate(causes):
-            cause_node = f"{cat_node}_{j}"
-            cause_safe = _dot_multiline(cause, width=22)
-            dot_lines.append(
-                f'{cause_node} [label="{cause_safe}", shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#94a3b8"];'
-            )
-            dot_lines.append(f"{cause_node} -> {cat_node};")
-
-    dot_lines.append("}")
-    st.graphviz_chart("\n".join(dot_lines))
+    if root_category:
+        st.success(f"🎯 Current Focus Area: {root_category}")
+    else:
+        st.info("Add causes to highlight a focus area.")
 
     # -------------------------
     # Identify Root Cause (Simple logic)

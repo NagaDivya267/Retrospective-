@@ -1664,94 +1664,101 @@ with tab5:
         discussion_sheet = get_or_create_worksheet("Discussions", rows=500, cols=5)
         fishbone_discussion_sheet = get_or_create_worksheet("Fishbone Discussions", rows=500, cols=8)
 
-        st.write("### 🐟 Fishbone Root Cause Discussions")
-        fishbone_state = st.session_state.get("fishbone_data", {})
-        top_voted_root_causes = get_top_voted_fishbone_causes(
-            fishbone_state if isinstance(fishbone_state, dict) else {},
-            limit=5,
+        selected_retro_type = st.selectbox(
+            "Select Retro Type For Discussion",
+            ["Fishbone", "5 Whys", "Sprint Detective", "Metrics Retro", "Mad-Sad-Glad"],
+            key="dashboard_retro_type",
         )
 
-        if not top_voted_root_causes:
-            st.info("No voted fishbone causes yet. Collect votes in Fishbone Analysis to enable root-cause discussions.")
-        else:
-            st.caption("Only top voted root causes are shown here for discussion.")
-
-            fishbone_header = get_sheet_row_values(
-                "Fishbone Discussions",
-                1,
-                rows=500,
-                cols=8,
-            )
-            expected_fishbone_header = ["Cause ID", "Cause", "Category", "Votes", "Discussion"]
-            if fishbone_header != expected_fishbone_header:
-                fishbone_discussion_sheet.clear()
-                fishbone_discussion_sheet.append_row(expected_fishbone_header)
-
-            cause_options: list[str] = []
-            cause_lookup: dict[str, dict[str, str | int]] = {}
-            for cause in top_voted_root_causes:
-                label = f"{cause['text']} ({cause['category']} | 👍 {cause['votes']})"
-                cause_options.append(label)
-                cause_lookup[label] = cause
-
-            selected_cause_label = st.selectbox(
-                "Select Top Root Cause",
-                cause_options,
-                key="fishbone_discussion_cause_select",
-            )
-            selected_cause = cause_lookup[selected_cause_label]
-            selected_cause_id = str(selected_cause["id"])
-
-            fishbone_discussion_input = st.text_area(
-                "Discussion for selected root cause",
-                key=f"fishbone_discussion_input_{selected_cause_id}",
+        if selected_retro_type == "Fishbone":
+            st.write("### 🐟 Fishbone Root Cause Discussions")
+            fishbone_state = st.session_state.get("fishbone_data", {})
+            top_voted_root_causes = get_top_voted_fishbone_causes(
+                fishbone_state if isinstance(fishbone_state, dict) else {},
+                limit=5,
             )
 
-            if st.button("Save Root Cause Discussion", key="save_fishbone_discussion_button"):
-                if fishbone_discussion_input.strip():
-                    fishbone_discussion_sheet.append_row(
-                        [
-                            selected_cause_id,
-                            str(selected_cause["text"]),
-                            str(selected_cause["category"]),
-                            int(selected_cause["votes"]),
-                            fishbone_discussion_input.strip(),
-                        ]
-                    )
-                    clear_google_sheet_read_cache()
-                    mark_sync_event("Saved fishbone root-cause discussion")
-                    clear_session_keys(f"fishbone_discussion_input_{selected_cause_id}")
-                    set_flash_message("dashboard", "success", "Root-cause discussion saved successfully!")
-                    st.rerun()
-                else:
-                    st.warning("Please enter discussion details before saving.")
-
-            fishbone_discussion_data = get_sheet_records("Fishbone Discussions", rows=500, cols=8)
-            if fishbone_discussion_data:
-                fishbone_discussion_df = pd.DataFrame(fishbone_discussion_data)
-                if {"Cause ID", "Discussion"}.issubset(set(fishbone_discussion_df.columns)):
-                    allowed_ids = {str(cause["id"]) for cause in top_voted_root_causes}
-                    scoped_fishbone_discussion_df = fishbone_discussion_df[
-                        fishbone_discussion_df["Cause ID"].astype(str).isin(allowed_ids)
-                    ]
-                    selected_discussion_df = scoped_fishbone_discussion_df[
-                        scoped_fishbone_discussion_df["Cause ID"].astype(str) == selected_cause_id
-                    ]
-
-                    st.write("#### Saved Discussions For Selected Root Cause")
-                    if selected_discussion_df.empty:
-                        st.info("No saved discussions for this root cause yet.")
-                    else:
-                        display_columns = [
-                            col
-                            for col in ["Cause", "Category", "Votes", "Discussion"]
-                            if col in selected_discussion_df.columns
-                        ]
-                        st.dataframe(selected_discussion_df[display_columns], use_container_width=True)
-                else:
-                    st.info("Fishbone discussion data schema is incomplete.")
+            if not top_voted_root_causes:
+                st.info("No voted fishbone causes yet. Collect votes in Fishbone Analysis to enable root-cause discussions.")
             else:
-                st.info("No fishbone root-cause discussions saved yet.")
+                st.caption("Only top voted root causes are shown here for discussion.")
+
+                fishbone_header = get_sheet_row_values(
+                    "Fishbone Discussions",
+                    1,
+                    rows=500,
+                    cols=8,
+                )
+                expected_fishbone_header = ["Cause ID", "Cause", "Category", "Votes", "Discussion"]
+                if fishbone_header != expected_fishbone_header:
+                    fishbone_discussion_sheet.clear()
+                    fishbone_discussion_sheet.append_row(expected_fishbone_header)
+
+                cause_options: list[str] = []
+                cause_lookup: dict[str, dict[str, str | int]] = {}
+                for cause in top_voted_root_causes:
+                    label = f"{cause['text']} ({cause['category']} | 👍 {cause['votes']})"
+                    cause_options.append(label)
+                    cause_lookup[label] = cause
+
+                selected_cause_label = st.selectbox(
+                    "Select Top Root Cause",
+                    cause_options,
+                    key="fishbone_discussion_cause_select",
+                )
+                selected_cause = cause_lookup[selected_cause_label]
+                selected_cause_id = str(selected_cause["id"])
+
+                fishbone_discussion_input = st.text_area(
+                    "Discussion for selected root cause",
+                    key=f"fishbone_discussion_input_{selected_cause_id}",
+                )
+
+                if st.button("Save Root Cause Discussion", key="save_fishbone_discussion_button"):
+                    if fishbone_discussion_input.strip():
+                        fishbone_discussion_sheet.append_row(
+                            [
+                                selected_cause_id,
+                                str(selected_cause["text"]),
+                                str(selected_cause["category"]),
+                                int(selected_cause["votes"]),
+                                fishbone_discussion_input.strip(),
+                            ]
+                        )
+                        clear_google_sheet_read_cache()
+                        mark_sync_event("Saved fishbone root-cause discussion")
+                        clear_session_keys(f"fishbone_discussion_input_{selected_cause_id}")
+                        set_flash_message("dashboard", "success", "Root-cause discussion saved successfully!")
+                        st.rerun()
+                    else:
+                        st.warning("Please enter discussion details before saving.")
+
+                fishbone_discussion_data = get_sheet_records("Fishbone Discussions", rows=500, cols=8)
+                if fishbone_discussion_data:
+                    fishbone_discussion_df = pd.DataFrame(fishbone_discussion_data)
+                    if {"Cause ID", "Discussion"}.issubset(set(fishbone_discussion_df.columns)):
+                        allowed_ids = {str(cause["id"]) for cause in top_voted_root_causes}
+                        scoped_fishbone_discussion_df = fishbone_discussion_df[
+                            fishbone_discussion_df["Cause ID"].astype(str).isin(allowed_ids)
+                        ]
+                        selected_discussion_df = scoped_fishbone_discussion_df[
+                            scoped_fishbone_discussion_df["Cause ID"].astype(str) == selected_cause_id
+                        ]
+
+                        st.write("#### Saved Discussions For Selected Root Cause")
+                        if selected_discussion_df.empty:
+                            st.info("No saved discussions for this root cause yet.")
+                        else:
+                            display_columns = [
+                                col
+                                for col in ["Cause", "Category", "Votes", "Discussion"]
+                                if col in selected_discussion_df.columns
+                            ]
+                            st.dataframe(selected_discussion_df[display_columns], use_container_width=True)
+                    else:
+                        st.info("Fishbone discussion data schema is incomplete.")
+                else:
+                    st.info("No fishbone root-cause discussions saved yet.")
 
         # Load all response rows from Google Sheets.
         data = get_sheet_records(RESPONSES_WORKSHEET_NAME, rows=500, cols=10)
@@ -1762,9 +1769,15 @@ with tab5:
         else:
             st.write("### 🔍 Filter by Question")
             questions = df["Question"].dropna().unique()
+            if selected_retro_type != "Fishbone":
+                allowed_questions = RETRO_QUESTION_MAP.get(selected_retro_type, [])
+                questions = [question for question in questions if question in allowed_questions]
 
             if len(questions) == 0:
-                st.info("No question data found in responses yet.")
+                if selected_retro_type == "Fishbone":
+                    st.info("No question data found in responses yet.")
+                else:
+                    st.info(f"No responses found for {selected_retro_type} yet.")
             else:
                 current_question = st.session_state.get("current_spin_question") or get_sheet_cell_value(
                     CONFIG_WORKSHEET_NAME,
@@ -2153,6 +2166,78 @@ Action Item | Priority
                 except Exception as ai_error:
                     st.error(f"Unable to generate AI actions: {ai_error}")
 
+        if st.button("Generate Fishbone Actions", key="generate_fishbone_actions_button"):
+            api_key, key_source, secret_keys = get_openai_api_key()
+            if not api_key:
+                st.error("OpenAI key is missing. Add OPENAI_API_KEY in Streamlit secrets and restart the app.")
+                st.caption(
+                    f"Diagnostics: key_source={key_source}; top_level_secrets={', '.join(secret_keys) if secret_keys else 'none'}"
+                )
+            else:
+                fishbone_state = st.session_state.get("fishbone_data", {})
+                top_voted_causes = get_top_voted_fishbone_causes(
+                    fishbone_state if isinstance(fishbone_state, dict) else {},
+                    limit=5,
+                )
+                if not top_voted_causes:
+                    st.warning("No voted fishbone causes found. Vote in Fishbone Analysis first.")
+                else:
+                    fishbone_discussion_data = get_sheet_records("Fishbone Discussions", rows=500, cols=8)
+                    fishbone_discussion_df = pd.DataFrame(fishbone_discussion_data) if fishbone_discussion_data else pd.DataFrame()
+
+                    if fishbone_discussion_df.empty or not {"Cause ID", "Discussion"}.issubset(set(fishbone_discussion_df.columns)):
+                        st.warning("No fishbone discussions found. Add discussion points in Dashboard first.")
+                    else:
+                        prompt_lines: list[str] = []
+                        for cause in top_voted_causes:
+                            cause_id = str(cause["id"])
+                            cause_discussions = fishbone_discussion_df[
+                                fishbone_discussion_df["Cause ID"].astype(str) == cause_id
+                            ]
+                            if cause_discussions.empty:
+                                continue
+                            discussion_points = "\n".join(
+                                f"- {text}"
+                                for text in cause_discussions["Discussion"].dropna().astype(str)
+                                if text.strip()
+                            )
+                            if not discussion_points:
+                                continue
+                            prompt_lines.append(
+                                f"Cause: {cause['text']} ({cause['category']}) | Votes: {cause['votes']}\n"
+                                f"Discussion Points:\n{discussion_points}"
+                            )
+
+                        if not prompt_lines:
+                            st.warning("No discussions found for top voted fishbone causes.")
+                        else:
+                            fishbone_prompt = f"""
+Generate 3-5 actionable tasks based on these top voted fishbone root causes and team discussion points.
+
+Rules:
+- Actions must be specific and implementable
+- Priority must be one of: High, Medium, Low
+- Do not repeat the cause text verbatim as action
+- Keep output concise
+
+Input:
+{chr(10).join(prompt_lines)}
+
+Output format:
+Action Item | Priority
+"""
+                            try:
+                                client = OpenAI(api_key=api_key)
+                                response = client.chat.completions.create(
+                                    model="gpt-4.1-mini",
+                                    messages=[{"role": "user", "content": fishbone_prompt}],
+                                    temperature=0.2,
+                                )
+                                ai_action_text = (response.choices[0].message.content or "").strip()
+                                st.session_state.ai_actions_text = ai_action_text
+                            except Exception as ai_error:
+                                st.error(f"Unable to generate Fishbone actions: {ai_error}")
+
         if ai_action_text:
             st.write("### Suggested Actions")
 
@@ -2370,10 +2455,6 @@ with tab7:
                         st.warning(f'"{clean_cause}" already exists in {cat}.')
                     else:
                         st.session_state.fishbone_data[cat].append(build_fishbone_cause(clean_cause))
-                        try:
-                            sync_fishbone_actions_to_tracker(st.session_state.fishbone_data)
-                        except Exception as sync_error:
-                            st.warning(f"Unable to sync Fishbone causes to Action Tracker: {sync_error}")
                         clear_session_keys(f"input_{cat}")
                         st.rerun()
 
@@ -2443,8 +2524,16 @@ Category: cause1, cause2
         key=lambda item: (-item[2], categories.index(item[1]), st.session_state.fishbone_data[item[1]].index(item[0])),
     )
     voted_causes = [item for item in sorted_causes if item[2] > 0]
-    root_cause = voted_causes[0][0] if voted_causes else None
-    root_category = voted_causes[0][1] if voted_causes else None
+    root_cause = None
+    root_category = None
+    root_vote_total = 0
+    if voted_causes:
+        top_vote_total = int(voted_causes[0][2])
+        top_vote_items = [item for item in voted_causes if int(item[2]) == top_vote_total]
+        if len(top_vote_items) == 1:
+            root_cause = top_vote_items[0][0]
+            root_category = top_vote_items[0][1]
+            root_vote_total = top_vote_total
 
     st.write("### 🏆 Top Root Causes (Vote Based)")
     top_root_causes = get_top_voted_fishbone_causes(st.session_state.fishbone_data, limit=3)
@@ -2464,7 +2553,9 @@ Category: cause1, cause2
     )
 
     if root_category and root_cause:
-        st.success(f"🎯 Current Focus Cause: {root_cause['text']} ({root_category}) with 👍 {root_cause['votes']}")
+        st.success(f"🎯 Current Focus Cause: {root_cause['text']} ({root_category}) with 👍 {root_vote_total}")
+    elif voted_causes:
+        st.info("No single focus cause yet. Top voted causes are tied.")
     else:
         st.info("Add causes and let the team vote to highlight a focus cause.")
 
@@ -2494,10 +2585,6 @@ Category: cause1, cause2
                 if vote_col3.button("Vote", key=f"vote_{cause['id']}", disabled=already_voted):
                     cause["votes"] += 1
                     st.session_state.fishbone_user_votes.add(cause["id"])
-                    try:
-                        sync_fishbone_actions_to_tracker(st.session_state.fishbone_data)
-                    except Exception as sync_error:
-                        st.warning(f"Unable to sync Fishbone causes to Action Tracker: {sync_error}")
                     st.rerun()
     else:
         st.info("Add at least one cause before collecting votes.")
@@ -2508,18 +2595,13 @@ Category: cause1, cause2
     st.write("### 🔍 Identify Root Cause")
 
     if st.button("Find Root Cause", key="fishbone_find_root_cause"):
-        if voted_causes:
-            selected_root_cause, focus_category, vote_total = voted_causes[0]
-            st.error(f"🎯 Root Cause: {selected_root_cause['text']} ({focus_category}) - 👍 {vote_total}")
+        if root_cause and root_category:
+            st.error(f"🎯 Root Cause: {root_cause['text']} ({root_category}) - 👍 {root_vote_total}")
+        elif voted_causes:
+            st.info("Root cause is tied across multiple causes. Add more votes to break the tie.")
         elif all_causes:
             st.info("Votes are required before identifying a root cause.")
         else:
             st.info("Add at least one cause to identify the root cause.")
 
-    try:
-        synced_count = sync_fishbone_actions_to_tracker(st.session_state.fishbone_data)
-        if synced_count > 0:
-            set_flash_message("action", "success", f"Added {synced_count} Fishbone actions to Action Tracker.")
-    except Exception as sync_error:
-        st.warning(f"Unable to sync Fishbone causes to Action Tracker: {sync_error}")
 

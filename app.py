@@ -520,22 +520,22 @@ def normalize_fishbone_category(
 
 
 def render_interactive_fishbone(
-        problem: str | None,
+    problem: str | None,
     data: dict[str, list[FishboneCause]],
-        root_category: str | None = None,
+    root_category: str | None = None,
     root_cause_id: str | None = None,
 ) -> None:
     """Render a fishbone in HTML/CSS/JS without Graphviz dependency."""
-        payload_json = json.dumps(
-                {
-                        "problem": problem or "Problem",
-                        "data": data,
-                        "root": root_category,
-                        "rootCauseId": root_cause_id,
-                }
-        ).replace("</", "<\\/")
+    payload_json = json.dumps(
+        {
+            "problem": problem or "Problem",
+            "data": data,
+            "root": root_category,
+            "rootCauseId": root_cause_id,
+        }
+    ).replace("</", "<\\/")
 
-        html = f"""
+    html = f"""
         <style>
             .fb-container {{
                 position: relative;
@@ -732,7 +732,7 @@ def render_interactive_fishbone(
         </script>
         """
 
-        components.html(html, height=640)
+    components.html(html, height=640)
 
 
 def ensure_spill_over_column(df: pd.DataFrame) -> pd.DataFrame:

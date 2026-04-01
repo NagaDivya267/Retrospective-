@@ -1071,18 +1071,20 @@ with tab3:
     show_flash_message("retro_game")
     st.subheader("🧠 AI Retro Game")
 
-    st.markdown("### 🔗 Quick Access")
-    st.markdown("[Open Fishbone Analysis tab](#fishbone-analysis)")
-    st.caption("If the link does not jump in your browser, click the 🐟 Fishbone Analysis tab above.")
-
     st.write("### Category To Retro Map")
-    retro_map_df = pd.DataFrame(
-        {
-            "Category": ["Delivery", "Quality", "Inventory", "Productivity", "People"],
-            "Retro": ["5 Whys", "Fishbone", "Sprint Detective", "Metrics Retro", "Mad-Sad-Glad"],
-        }
+    retro_map_rows = [
+        ("Delivery", "5 Whys"),
+        ("Quality", "[Fishbone](#fishbone-analysis)"),
+        ("Inventory", "Sprint Detective"),
+        ("Productivity", "Metrics Retro"),
+        ("People", "Mad-Sad-Glad"),
+    ]
+
+    retro_map_markdown = "| Category | Retro |\n|---|---|\n" + "\n".join(
+        f"| {category} | {retro} |" for category, retro in retro_map_rows
     )
-    st.dataframe(retro_map_df, use_container_width=True)
+    st.markdown(retro_map_markdown)
+    st.caption("If the link does not jump in your browser, click the 🐟 Fishbone Analysis tab above.")
 
     if not retro_analysis:
         st.info("Add Sprint Insights data to calculate average category scores and AI retro recommendation.")

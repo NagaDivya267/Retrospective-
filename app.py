@@ -1949,26 +1949,33 @@ Category: cause1, cause2
     # -------------------------
     st.write("### 🐟 Fishbone Diagram")
 
-    try:
-        import graphviz
+    def _dot_escape(value: str) -> str:
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
-        dot = graphviz.Digraph()
+    problem_safe = _dot_escape(problem)
+    dot_lines = [
+        "digraph Fishbone {",
+        "rankdir=LR;",
+        "node [fontname=Helvetica];",
+        f'Problem [label="{problem_safe}", shape=box, style=filled, fillcolor=lightcoral];',
+    ]
 
-        dot.node("Problem", problem, shape="box", style="filled", color="lightcoral")
+    for i, (cat, causes) in enumerate(st.session_state.fishbone_data.items()):
+        cat_node = f"cat_{i}"
+        cat_safe = _dot_escape(cat)
+        dot_lines.append(
+            f'{cat_node} [label="{cat_safe}", shape=ellipse, style=filled, fillcolor=lightblue];'
+        )
+        dot_lines.append(f"{cat_node} -> Problem;")
 
-        for i, (cat, causes) in enumerate(st.session_state.fishbone_data.items()):
-            cat_node = f"cat_{i}"
-            dot.node(cat_node, cat, shape="ellipse", color="lightblue")
-            dot.edge(cat_node, "Problem")
+        for j, cause in enumerate(causes):
+            cause_node = f"{cat_node}_{j}"
+            cause_safe = _dot_escape(cause)
+            dot_lines.append(f'{cause_node} [label="{cause_safe}", shape=note];')
+            dot_lines.append(f"{cause_node} -> {cat_node};")
 
-            for j, cause in enumerate(causes):
-                cause_node = f"{cat_node}_{j}"
-                dot.node(cause_node, cause, shape="note")
-                dot.edge(cause_node, cat_node)
-
-        st.graphviz_chart(dot)
-    except Exception as error:
-        st.warning(f"Fishbone diagram is unavailable: {error}")
+    dot_lines.append("}")
+    st.graphviz_chart("\n".join(dot_lines))
 
     # -------------------------
     # Identify Root Cause (Simple logic)

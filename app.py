@@ -1423,18 +1423,18 @@ with tab3:
 
     st.write("### Category To Retro Map")
     retro_map_rows = [
-        ("Delivery", "5 Whys"),
+        ("Delivery", "[5 Whys](#spin-wheel)"),
         ("Quality", "[Fishbone](#fishbone-analysis)"),
-        ("Inventory", "Sprint Detective"),
-        ("Productivity", "Metrics Retro"),
-        ("People", "Mad-Sad-Glad"),
+        ("Inventory", "[Sprint Detective](#spin-wheel)"),
+        ("Productivity", "[Metrics Retro](#spin-wheel)"),
+        ("People", "[Mad-Sad-Glad](#spin-wheel)"),
     ]
 
     retro_map_markdown = "| Category | Retro |\n|---|---|\n" + "\n".join(
         f"| {category} | {retro} |" for category, retro in retro_map_rows
     )
     st.markdown(retro_map_markdown)
-    st.caption("If the link does not jump in your browser, click the 🐟 Fishbone Analysis tab above.")
+    st.caption("Fishbone opens in the Fishbone tab. All other retros are run from the 🎡 Spin Wheel tab.")
 
     if not retro_analysis:
         st.info("Add Sprint Insights data to calculate average category scores and AI retro recommendation.")
@@ -1670,6 +1670,9 @@ with tab5:
             key="dashboard_retro_type",
         )
 
+        if selected_retro_type != "Fishbone":
+            st.caption("Discussion points for this retro are sourced from 🎡 Spin Wheel responses.")
+
         if selected_retro_type == "Fishbone":
             st.write("### 🐟 Fishbone Root Cause Discussions")
             fishbone_state = st.session_state.get("fishbone_data", {})
@@ -1769,13 +1772,15 @@ with tab5:
         else:
             st.write("### 🔍 Filter by Question")
             questions = df["Question"].dropna().unique()
-            if selected_retro_type != "Fishbone":
+            if selected_retro_type == "Fishbone":
+                questions = []
+            else:
                 allowed_questions = RETRO_QUESTION_MAP.get(selected_retro_type, [])
                 questions = [question for question in questions if question in allowed_questions]
 
             if len(questions) == 0:
                 if selected_retro_type == "Fishbone":
-                    st.info("No question data found in responses yet.")
+                    st.info("Fishbone discussions are handled above using top voted root causes.")
                 else:
                     st.info(f"No responses found for {selected_retro_type} yet.")
             else:
@@ -2519,21 +2524,27 @@ Category: cause1, cause2
         for cat in categories
         for cause in st.session_state.fishbone_data.get(cat, [])
     ]
-    sorted_causes = sorted(
-        all_causes,
-        key=lambda item: (-item[2], categories.index(item[1]), st.session_state.fishbone_data[item[1]].index(item[0])),
-    )
-    voted_causes = [item for item in sorted_causes if item[2] > 0]
+    category_vote_totals = {
+        cat: sum(int(cause.get("votes", 0)) for cause in st.session_state.fishbone_data.get(cat, []))
+        for cat in categories
+    }
+    voted_categories = [cat for cat, total in category_vote_totals.items() if total > 0]
     root_cause = None
     root_category = None
     root_vote_total = 0
-    if voted_causes:
-        top_vote_total = int(voted_causes[0][2])
-        top_vote_items = [item for item in voted_causes if int(item[2]) == top_vote_total]
-        if len(top_vote_items) == 1:
-            root_cause = top_vote_items[0][0]
-            root_category = top_vote_items[0][1]
-            root_vote_total = top_vote_total
+    if voted_categories:
+        top_category_total = max(category_vote_totals[cat] for cat in voted_categories)
+        top_categories = [cat for cat in voted_categories if category_vote_totals[cat] == top_category_total]
+        if len(top_categories) == 1:
+            root_category = top_categories[0]
+            root_vote_total = int(top_category_total)
+            root_category_causes = list(st.session_state.fishbone_data.get(root_category, []))
+            if root_category_causes:
+                sorted_root_causes = sorted(
+                    root_category_causes,
+                    key=lambda cause_item: (-int(cause_item.get("votes", 0)), root_category_causes.index(cause_item)),
+                )
+                root_cause = sorted_root_causes[0]
 
     st.write("### 🏆 Top Root Causes (Vote Based)")
     top_root_causes = get_top_voted_fishbone_causes(st.session_state.fishbone_data, limit=3)
@@ -2552,10 +2563,16 @@ Category: cause1, cause2
         root_cause["id"] if root_cause else None,
     )
 
-    if root_category and root_cause:
-        st.success(f"🎯 Current Focus Cause: {root_cause['text']} ({root_category}) with 👍 {root_vote_total}")
-    elif voted_causes:
-        st.info("No single focus cause yet. Top voted causes are tied.")
+    if root_category:
+        if root_cause:
+            st.success(
+                f"🎯 Current Focus Category: {root_category} (Total 👍 {root_vote_total}) | "
+                f"Top Cause: {root_cause['text']} (👍 {root_cause['votes']})"
+            )
+        else:
+            st.success(f"🎯 Current Focus Category: {root_category} (Total 👍 {root_vote_total})")
+    elif voted_categories:
+        st.info("Top category votes are tied. Add more votes to break the tie.")
     else:
         st.info("Add causes and let the team vote to highlight a focus cause.")
 
@@ -2595,10 +2612,16 @@ Category: cause1, cause2
     st.write("### 🔍 Identify Root Cause")
 
     if st.button("Find Root Cause", key="fishbone_find_root_cause"):
-        if root_cause and root_category:
-            st.error(f"🎯 Root Cause: {root_cause['text']} ({root_category}) - 👍 {root_vote_total}")
-        elif voted_causes:
-            st.info("Root cause is tied across multiple causes. Add more votes to break the tie.")
+        if root_category:
+            if root_cause:
+                st.error(
+                    f"🎯 Root Cause Category: {root_category} (Total 👍 {root_vote_total}) | "
+                    f"Top Cause: {root_cause['text']} (👍 {root_cause['votes']})"
+                )
+            else:
+                st.error(f"🎯 Root Cause Category: {root_category} (Total 👍 {root_vote_total})")
+        elif voted_categories:
+            st.info("Root cause category is tied. Add more votes to break the tie.")
         elif all_causes:
             st.info("Votes are required before identifying a root cause.")
         else:

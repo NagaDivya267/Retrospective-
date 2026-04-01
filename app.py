@@ -21,12 +21,12 @@ from openai import OpenAI
 # Page Config and Global UI Theme
 # -------------------------------
 st.set_page_config(
-    page_title="AI Scrum Master Assistant",
+    page_title="AI Retrospective Assistant",
     layout="wide",
     page_icon="🚀",
 )
 
-st.title("AI Scrum Master Assistant")
+st.title("AI Retrospective Assistant")
 st.caption("Smarter retrospectives | Better decisions | Faster delivery")
 
 FILE_NAME = "sprint_data.csv"
@@ -818,13 +818,14 @@ if retro_analysis and "ai_reco" in retro_analysis:
 
 
 # Create Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "😊 Mood",
     "📊 Sprint Insights",
     "🧠 AI Retro Game",
     "🎡 Spin Wheel",
     "👑 Dashboard",
     "📌 Action Tracker",
+    "🐟 Fishbone Analysis"
 ])
 
 with tab1:
@@ -1069,6 +1070,10 @@ with tab2:
 with tab3:
     show_flash_message("retro_game")
     st.subheader("🧠 AI Retro Game")
+
+    st.markdown("### 🔗 Quick Access")
+    st.markdown("[Open Fishbone Analysis tab](#fishbone-analysis)")
+    st.caption("If the link does not jump in your browser, click the 🐟 Fishbone Analysis tab above.")
 
     st.write("### Category To Retro Map")
     retro_map_df = pd.DataFrame(
@@ -1854,4 +1859,171 @@ Action Item | Priority
                         st.warning("Action cannot be empty.")
     except Exception as error:
         st.error(f"Unable to load Action Tracker: {error}")
+
+with tab7:
+    show_flash_message("fishbone")
+    st.subheader("🐟 Fishbone Root Cause Analysis")
+
+    # -------------------------
+    # Problem Statement
+    # -------------------------
+    problem = st.text_input(
+        "🎯 Problem Statement",
+        value=st.session_state.get("ai_problem", "High Defects / Spillover"),
+        key="fishbone_problem_input",
+    )
+
+    # -------------------------
+    # Categories
+    # -------------------------
+    categories = ["People", "Process", "Tools", "Requirements", "Dependencies"]
+
+    if "fishbone_data" not in st.session_state:
+        st.session_state.fishbone_data = {cat: [] for cat in categories}
+
+    # Keep categories aligned when list changes.
+    for cat in categories:
+        if cat not in st.session_state.fishbone_data:
+            st.session_state.fishbone_data[cat] = []
+
+    # -------------------------
+    # Add Causes (Interactive)
+    # -------------------------
+    st.write("### ➕ Add Causes")
+
+    cols = st.columns(len(categories))
+
+    for i, cat in enumerate(categories):
+        with cols[i]:
+            st.markdown(f"**{cat}**")
+
+            new_cause = st.text_input(f"Add cause in {cat}", key=f"input_{cat}")
+
+            if st.button(f"+ Add", key=f"btn_{cat}"):
+                if new_cause.strip():
+                    st.session_state.fishbone_data[cat].append(new_cause.strip())
+                    clear_session_keys(f"input_{cat}")
+                    st.rerun()
+
+            for cause in st.session_state.fishbone_data[cat]:
+                st.caption(f"• {cause}")
+
+    # -------------------------
+    # AI Suggestions
+    # -------------------------
+    st.write("### 🤖 AI Suggested Causes")
+
+    if st.button("💡 Generate AI Suggestions", key="fishbone_generate_ai_suggestions"):
+        api_key, key_source, secret_keys = get_openai_api_key()
+
+        if not api_key:
+            st.error("OpenAI key is missing. Add OPENAI_API_KEY in Streamlit secrets and restart the app.")
+            st.caption(
+                f"Diagnostics: key_source={key_source}; top_level_secrets={', '.join(secret_keys) if secret_keys else 'none'}"
+            )
+        else:
+            prompt = f"""
+Problem: {problem}
+
+Suggest root causes under:
+People, Process, Tools, Requirements, Dependencies
+
+Format:
+Category: cause1, cause2
+"""
+
+            try:
+                client = OpenAI(api_key=api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4.1-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                )
+                output = response.choices[0].message.content or "No suggestions generated."
+                st.text(output)
+            except Exception as ai_error:
+                st.error(f"Unable to generate AI suggestions: {ai_error}")
+
+    # -------------------------
+    # Graphviz Fishbone Diagram
+    # -------------------------
+    st.write("### 🐟 Fishbone Diagram")
+
+    try:
+        import graphviz
+
+        dot = graphviz.Digraph()
+
+        dot.node("Problem", problem, shape="box", style="filled", color="lightcoral")
+
+        for i, (cat, causes) in enumerate(st.session_state.fishbone_data.items()):
+            cat_node = f"cat_{i}"
+            dot.node(cat_node, cat, shape="ellipse", color="lightblue")
+            dot.edge(cat_node, "Problem")
+
+            for j, cause in enumerate(causes):
+                cause_node = f"{cat_node}_{j}"
+                dot.node(cause_node, cause, shape="note")
+                dot.edge(cause_node, cat_node)
+
+        st.graphviz_chart(dot)
+    except Exception as error:
+        st.warning(f"Fishbone diagram is unavailable: {error}")
+
+    # -------------------------
+    # Identify Root Cause (Simple logic)
+    # -------------------------
+    st.write("### 🔍 Identify Root Cause")
+
+    if st.button("Find Root Cause", key="fishbone_find_root_cause"):
+        if any(len(st.session_state.fishbone_data[cat]) > 0 for cat in categories):
+            max_cat = max(
+                st.session_state.fishbone_data,
+                key=lambda k: len(st.session_state.fishbone_data[k]),
+            )
+            st.success(f"Primary Problem Area: {max_cat}")
+        else:
+            st.info("Add at least one cause to identify the primary problem area.")
+
+    # -------------------------
+    # Generate Actions
+    # -------------------------
+    st.write("### 🚀 Suggested Actions")
+
+    if st.button("Generate Actions from Fishbone", key="fishbone_generate_actions"):
+        all_causes = []
+        for cat, causes in st.session_state.fishbone_data.items():
+            for cause in causes:
+                all_causes.append(f"{cat}: {cause}")
+
+        if not all_causes:
+            st.info("Add causes before generating actions.")
+        else:
+            api_key, key_source, secret_keys = get_openai_api_key()
+
+            if not api_key:
+                st.error("OpenAI key is missing. Add OPENAI_API_KEY in Streamlit secrets and restart the app.")
+                st.caption(
+                    f"Diagnostics: key_source={key_source}; top_level_secrets={', '.join(secret_keys) if secret_keys else 'none'}"
+                )
+            else:
+                prompt = f"""
+Problem: {problem}
+
+Causes:
+{chr(10).join(all_causes)}
+
+Suggest 3-5 actionable improvements.
+"""
+
+                try:
+                    client = OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-4.1-mini",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.3,
+                    )
+                    st.write(response.choices[0].message.content or "No actions generated.")
+                except Exception as ai_error:
+                    st.error(f"Unable to generate fishbone actions: {ai_error}")
 

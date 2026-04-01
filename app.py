@@ -5,6 +5,7 @@ import math
 import os
 import random
 import struct
+import textwrap
 import time
 import wave
 from datetime import datetime
@@ -1893,6 +1894,14 @@ with tab7:
     # -------------------------
     st.write("### ➕ Add Causes")
 
+    utility_col1, utility_col2 = st.columns([1, 1])
+    if utility_col1.button("🧹 Clear All Causes", key="fishbone_clear_all"):
+        st.session_state.fishbone_data = {cat: [] for cat in categories}
+        st.rerun()
+
+    total_cause_count = sum(len(st.session_state.fishbone_data.get(cat, [])) for cat in categories)
+    utility_col2.metric("Total Causes", total_cause_count)
+
     cols = st.columns(len(categories))
 
     for i, cat in enumerate(categories):
@@ -1901,14 +1910,23 @@ with tab7:
 
             new_cause = st.text_input(f"Add cause in {cat}", key=f"input_{cat}")
 
-            if st.button(f"+ Add", key=f"btn_{cat}"):
+            add_col, clear_col = st.columns([1, 1])
+            if add_col.button("+ Add", key=f"btn_{cat}"):
                 if new_cause.strip():
                     st.session_state.fishbone_data[cat].append(new_cause.strip())
                     clear_session_keys(f"input_{cat}")
                     st.rerun()
 
-            for cause in st.session_state.fishbone_data[cat]:
-                st.caption(f"• {cause}")
+            if clear_col.button("Clear", key=f"clear_{cat}"):
+                st.session_state.fishbone_data[cat] = []
+                st.rerun()
+
+            for cause_index, cause in enumerate(list(st.session_state.fishbone_data[cat])):
+                cause_text_col, cause_delete_col = st.columns([5, 1])
+                cause_text_col.caption(f"{cause_index + 1}. {cause}")
+                if cause_delete_col.button("✕", key=f"del_{cat}_{cause_index}"):
+                    st.session_state.fishbone_data[cat].pop(cause_index)
+                    st.rerun()
 
     # -------------------------
     # AI Suggestions
@@ -1954,26 +1972,48 @@ Category: cause1, cause2
     def _dot_escape(value: str) -> str:
         return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
-    problem_safe = _dot_escape(problem)
+    def _dot_multiline(value: str, width: int = 24) -> str:
+        wrapped_value = textwrap.fill(str(value), width=width)
+        return _dot_escape(wrapped_value).replace("\n", "\\n")
+
+    diagram_density = st.select_slider(
+        "Diagram Spacing",
+        options=["Compact", "Balanced", "Comfortable"],
+        value="Comfortable",
+        key="fishbone_diagram_density",
+    )
+
+    spacing_map = {
+        "Compact": (0.5, 0.8),
+        "Balanced": (0.8, 1.1),
+        "Comfortable": (1.1, 1.5),
+    }
+    nodesep, ranksep = spacing_map.get(diagram_density, (1.1, 1.5))
+
+    problem_safe = _dot_multiline(problem, width=28)
     dot_lines = [
         "digraph Fishbone {",
         "rankdir=LR;",
-        "node [fontname=Helvetica];",
-        f'Problem [label="{problem_safe}", shape=box, style=filled, fillcolor=lightcoral];',
+        f"graph [nodesep={nodesep}, ranksep={ranksep}, splines=true, pad=0.3];",
+        "node [fontname=Helvetica, fontsize=12, margin=0.15];",
+        "edge [penwidth=1.2, color=gray35];",
+        f'Problem [label="{problem_safe}", shape=box, style="filled,rounded", fillcolor="#fca5a5", color="#b91c1c", penwidth=1.6];',
     ]
 
     for i, (cat, causes) in enumerate(st.session_state.fishbone_data.items()):
         cat_node = f"cat_{i}"
-        cat_safe = _dot_escape(cat)
+        cat_safe = _dot_multiline(cat, width=16)
         dot_lines.append(
-            f'{cat_node} [label="{cat_safe}", shape=ellipse, style=filled, fillcolor=lightblue];'
+            f'{cat_node} [label="{cat_safe}", shape=ellipse, style=filled, fillcolor="#bfdbfe", color="#1d4ed8", penwidth=1.4];'
         )
         dot_lines.append(f"{cat_node} -> Problem;")
 
         for j, cause in enumerate(causes):
             cause_node = f"{cat_node}_{j}"
-            cause_safe = _dot_escape(cause)
-            dot_lines.append(f'{cause_node} [label="{cause_safe}", shape=note];')
+            cause_safe = _dot_multiline(cause, width=22)
+            dot_lines.append(
+                f'{cause_node} [label="{cause_safe}", shape=box, style="rounded,filled", fillcolor="#f8fafc", color="#94a3b8"];'
+            )
             dot_lines.append(f"{cause_node} -> {cat_node};")
 
     dot_lines.append("}")

@@ -697,18 +697,6 @@ def render_interactive_fishbone(
             const head = document.getElementById("head");
             head.textContent = payload.problem || "Problem";
 
-            function triggerVote(causeId) {{
-                try {{
-                    const host = window.parent && window.parent !== window ? window.parent : window;
-                    const nextUrl = new URL(host.location.href);
-                    nextUrl.searchParams.set("fb_vote", causeId);
-                    nextUrl.searchParams.set("fb_tick", String(Date.now()));
-                    host.location.href = nextUrl.toString();
-                }} catch (error) {{
-                    console.error("Unable to submit fishbone vote", error);
-                }}
-            }}
-
             function render() {{
                 const bones = document.querySelectorAll(".bone");
                 bones.forEach((b, idx) => {{
@@ -745,19 +733,22 @@ def render_interactive_fishbone(
                         votePill.textContent = `👍 ${{c.votes || 0}}`;
                         el.appendChild(votePill);
 
-                        const voteButton = document.createElement("button");
+                        const voteButton = document.createElement("a");
                         voteButton.className = "vote-btn";
-                        voteButton.type = "button";
                         const alreadyVoted = votedCauseIds.has(c.id);
-                        voteButton.disabled = alreadyVoted;
+                        voteButton.role = "button";
+                        voteButton.style.textDecoration = "none";
                         voteButton.textContent = alreadyVoted ? "Voted" : "Vote";
-                        voteButton.onclick = (event) => {{
-                            event.preventDefault();
-                            event.stopPropagation();
-                            if (!alreadyVoted) {{
-                                triggerVote(c.id);
-                            }}
-                        }};
+                        if (alreadyVoted) {{
+                            voteButton.href = "javascript:void(0)";
+                            voteButton.setAttribute("aria-disabled", "true");
+                            voteButton.style.pointerEvents = "none";
+                            voteButton.style.opacity = "0.6";
+                        }} else {{
+                            const voteUrl = `?fb_vote=${{encodeURIComponent(c.id)}}&fb_tick=${{Date.now()}}#fishbone-analysis`;
+                            voteButton.href = voteUrl;
+                            voteButton.target = "_top";
+                        }}
                         el.appendChild(voteButton);
 
                         if (root && cat === root && rootCauseId && c.id === rootCauseId) {{
@@ -2475,6 +2466,10 @@ Top voted causes:
 {chr(10).join(prioritized_causes)}
 
 Suggest 3-5 actionable improvements.
+
+Output format:
+Action Item | Priority
+Priority must be one of High, Medium, Low
 """
 
                 try:
@@ -2484,7 +2479,92 @@ Suggest 3-5 actionable improvements.
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.3,
                     )
-                    st.write(response.choices[0].message.content or "No actions generated.")
+                    fishbone_actions_text = (response.choices[0].message.content or "").strip()
+                    st.session_state["ai_actions_text"] = fishbone_actions_text
+
+                    parsed_actions: list[tuple[str, str]] = []
+                    for raw_line in fishbone_actions_text.splitlines():
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+
+                        if "|" in line:
+                            left, right = [part.strip() for part in line.split("|", 1)]
+                            if not left or not right:
+                                continue
+                            if left.lower() in {"action item", "action", "task"}:
+                                continue
+                            if set(left).issubset({"-", ":"}) or set(right).issubset({"-", ":"}):
+                                continue
+
+                            raw_priority = right.lower()
+                            if raw_priority.startswith("high"):
+                                clean_priority = "High"
+                            elif raw_priority.startswith("medium"):
+                                clean_priority = "Medium"
+                            elif raw_priority.startswith("low"):
+                                clean_priority = "Low"
+                            else:
+                                continue
+
+                            parsed_actions.append((left, clean_priority))
+                            continue
+
+                        if line[0] in {"-", "*", "•"}:
+                            clean_action = line[1:].strip()
+                            if clean_action:
+                                parsed_actions.append((clean_action, "Medium"))
+
+                    deduped_actions: list[tuple[str, str]] = []
+                    seen_actions: set[str] = set()
+                    for action_text, action_priority in parsed_actions:
+                        normalized_key = action_text.strip().casefold()
+                        if not normalized_key or normalized_key in seen_actions:
+                            continue
+                        seen_actions.add(normalized_key)
+                        deduped_actions.append((action_text.strip(), action_priority))
+
+                    if deduped_actions:
+                        workbook = get_google_workbook()
+                        try:
+                            action_sheet = workbook.worksheet(ACTION_WORKSHEET_NAME)
+                        except gspread.WorksheetNotFound:
+                            action_sheet = workbook.add_worksheet(title=ACTION_WORKSHEET_NAME, rows=500, cols=10)
+
+                        ensure_action_sheet_schema(action_sheet)
+                        existing_action_df = normalize_action_dataframe(
+                            pd.DataFrame(get_sheet_records(ACTION_WORKSHEET_NAME, rows=500, cols=10))
+                        )
+                        existing_actions = (
+                            set(existing_action_df["Action"].astype(str).str.strip().str.casefold())
+                            if not existing_action_df.empty
+                            else set()
+                        )
+
+                        saved_count = 0
+                        for action_text, action_priority in deduped_actions:
+                            action_key = action_text.casefold()
+                            if action_key in existing_actions:
+                                continue
+                            action_sheet.append_row([action_text, action_priority, AI_ACTION_SOURCE])
+                            existing_actions.add(action_key)
+                            saved_count += 1
+
+                        clear_google_sheet_read_cache()
+                        mark_sync_event("Saved fishbone AI actions")
+
+                        if saved_count > 0:
+                            set_flash_message("action", "success", f"Saved {saved_count} fishbone actions to Action Tracker.")
+                            st.success(f"Saved {saved_count} actions to Action Tracker.")
+                        else:
+                            st.info("Generated actions were already present in Action Tracker.")
+                    else:
+                        st.warning("AI response did not match expected Action Item | Priority format.")
+
+                    if fishbone_actions_text:
+                        st.write(fishbone_actions_text)
+                    else:
+                        st.info("No actions generated.")
                 except Exception as ai_error:
                     st.error(f"Unable to generate fishbone actions: {ai_error}")
 

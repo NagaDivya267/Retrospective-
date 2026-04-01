@@ -733,21 +733,27 @@ def render_interactive_fishbone(
                         votePill.textContent = `👍 ${{c.votes || 0}}`;
                         el.appendChild(votePill);
 
-                        const voteButton = document.createElement("a");
+                        const voteButton = document.createElement("button");
                         voteButton.className = "vote-btn";
                         const alreadyVoted = votedCauseIds.has(c.id);
-                        voteButton.role = "button";
-                        voteButton.style.textDecoration = "none";
+                        voteButton.type = "button";
                         voteButton.textContent = alreadyVoted ? "Voted" : "Vote";
                         if (alreadyVoted) {{
-                            voteButton.href = "javascript:void(0)";
-                            voteButton.setAttribute("aria-disabled", "true");
-                            voteButton.style.pointerEvents = "none";
-                            voteButton.style.opacity = "0.6";
+                            voteButton.disabled = true;
                         }} else {{
-                            const voteUrl = `?fb_vote=${{encodeURIComponent(c.id)}}&fb_tick=${{Date.now()}}#fishbone-analysis`;
-                            voteButton.href = voteUrl;
-                            voteButton.target = "_top";
+                            voteButton.addEventListener("click", () => {{
+                                try {{
+                                    const topWindow = window.top || window.parent || window;
+                                    const nextUrl = new URL(topWindow.location.href);
+                                    nextUrl.searchParams.set("fb_vote", c.id);
+                                    nextUrl.searchParams.set("fb_tick", String(Date.now()));
+                                    nextUrl.hash = "fishbone-analysis";
+                                    topWindow.location.assign(nextUrl.toString());
+                                }} catch (_error) {{
+                                    const fallbackUrl = `?fb_vote=${{encodeURIComponent(c.id)}}&fb_tick=${{Date.now()}}#fishbone-analysis`;
+                                    window.location.assign(fallbackUrl);
+                                }}
+                            }});
                         }}
                         el.appendChild(voteButton);
 
@@ -2206,7 +2212,11 @@ with tab7:
     else:
         st.session_state.fishbone_user_votes = {str(cause_id) for cause_id in st.session_state.fishbone_user_votes}
 
-    vote_from_diagram = str(st.query_params.get("fb_vote", "")).strip()
+    raw_vote_param = st.query_params.get("fb_vote", "")
+    if isinstance(raw_vote_param, list):
+        vote_from_diagram = str(raw_vote_param[0]).strip() if raw_vote_param else ""
+    else:
+        vote_from_diagram = str(raw_vote_param).strip()
     if vote_from_diagram:
         vote_found = False
         already_voted_here = False

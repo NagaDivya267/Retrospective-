@@ -923,21 +923,28 @@ with tab2:
     st.session_state.sprint_df = ensure_spill_over_column(st.session_state.sprint_df)
     st.session_state.sprint_df = st.session_state.sprint_df.reindex(columns=sprint_columns)
 
-    # ------------------ OPTION 1: CSV Upload ------------------
-    st.write("### Upload CSV")
-    uploaded_file = st.file_uploader("Upload Sprint Data CSV", type=["csv"])
+    # ------------------ OPTION 1: CSV / Excel Upload ------------------
+    st.write("### Upload CSV or Excel")
+    uploaded_file = st.file_uploader("Upload Sprint Data (CSV, XLSX, XLS)", type=["csv", "xlsx", "xls"])
 
     if uploaded_file:
-        df_uploaded = pd.read_csv(uploaded_file)
-
-        required_cols = ["Sprint", "Committed", "Completed", "Scope Added"]
-        if all(col in df_uploaded.columns for col in required_cols):
-            if "Defects #" not in df_uploaded.columns:
-                df_uploaded["Defects #"] = 0
-            st.session_state.sprint_df = ensure_spill_over_column(df_uploaded.tail(6)).reindex(columns=sprint_columns)
-            st.success("CSV uploaded successfully!")
+        try:
+            uploaded_name = uploaded_file.name.lower()
+            if uploaded_name.endswith(".csv"):
+                df_uploaded = pd.read_csv(uploaded_file)
+            else:
+                df_uploaded = pd.read_excel(uploaded_file)
+        except Exception as error:
+            st.error(f"Unable to read uploaded file: {error}")
         else:
-            st.error("CSV must contain: Sprint, Committed, Completed, Scope Added")
+            required_cols = ["Sprint", "Committed", "Completed", "Scope Added"]
+            if all(col in df_uploaded.columns for col in required_cols):
+                if "Defects #" not in df_uploaded.columns:
+                    df_uploaded["Defects #"] = 0
+                st.session_state.sprint_df = ensure_spill_over_column(df_uploaded.tail(6)).reindex(columns=sprint_columns)
+                st.success("File uploaded successfully!")
+            else:
+                st.error("Uploaded file must contain: Sprint, Committed, Completed, Scope Added")
 
     # ------------------ OPTION 2: Manual Entry ------------------
     st.write("### Add Sprint Data Manually")

@@ -2362,6 +2362,8 @@ Category: cause1, cause2
     # Generate Actions
     # -------------------------
     st.write("### 🚀 Suggested Actions")
+    st.markdown("[Open Action Tracker](#action-tracker)")
+    st.caption("If the link does not jump in your browser, click the 📌 Action Tracker tab above.")
 
     if st.button("Generate Actions from Fishbone", key="fishbone_generate_actions"):
         top_causes_for_actions = voted_causes[:5]

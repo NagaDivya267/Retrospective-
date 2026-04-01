@@ -7,8 +7,10 @@ import random
 import struct
 import textwrap
 import time
+import uuid
 import wave
 from datetime import datetime
+from typing import TypedDict
 
 import gspread
 import pandas as pd
@@ -466,13 +468,70 @@ def render_question_timer(question: str, duration_seconds: int, timer_reset_key:
     )
 
 
-def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_category: str | None = None) -> None:
-        """Render an interactive fishbone in HTML/CSS/JS without Graphviz dependency."""
+class FishboneCause(TypedDict):
+    id: str
+    text: str
+    votes: int
+
+
+FISHBONE_CATEGORIES = ["People", "Process", "Tools", "Dependencies"]
+
+
+def build_fishbone_cause(text: str, votes: int = 0, cause_id: str | None = None) -> FishboneCause:
+    return {
+        "id": cause_id or str(uuid.uuid4()),
+        "text": text.strip(),
+        "votes": max(int(votes), 0),
+    }
+
+
+def normalize_fishbone_category(
+    raw_causes: object,
+    legacy_votes: dict[str, int] | None = None,
+) -> list[FishboneCause]:
+    normalized: list[FishboneCause] = []
+    if not isinstance(raw_causes, list):
+        return normalized
+
+    vote_lookup = legacy_votes or {}
+    for raw_cause in raw_causes:
+        if isinstance(raw_cause, dict):
+            cause_text = str(raw_cause.get("text", "")).strip()
+            if not cause_text:
+                continue
+
+            raw_cause_id = str(raw_cause.get("id", "")).strip()
+            raw_votes = raw_cause.get("votes", 0)
+            try:
+                cause_votes = max(int(raw_votes), 0)
+            except (TypeError, ValueError):
+                cause_votes = 0
+
+            normalized.append(build_fishbone_cause(cause_text, cause_votes, raw_cause_id or None))
+            continue
+
+        cause_text = str(raw_cause).strip()
+        if not cause_text:
+            continue
+
+        normalized.append(build_fishbone_cause(cause_text, vote_lookup.get(cause_text, 0)))
+
+    return normalized
+
+
+def render_interactive_fishbone(
+        problem: str | None,
+    data: dict[str, list[FishboneCause]],
+        root_category: str | None = None,
+    root_cause_id: str | None = None,
+) -> None:
+        """Render a vote-aware fishbone in HTML/CSS/JS without Graphviz dependency."""
         payload_json = json.dumps(
                 {
-                        "problem": problem,
+                        "problem": problem or "Problem",
                         "data": data,
                         "root": root_category,
+                        "rootCauseId": root_cause_id,
                 }
         ).replace("</", "<\\/")
 
@@ -481,59 +540,118 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
             .fb-container {{
                 position: relative;
                 width: 100%;
-                height: 500px;
+                min-height: 620px;
                 font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-                background: #0f172a;
+                background: linear-gradient(180deg, #0f172a 0%, #111c35 100%);
                 border-radius: 16px;
                 overflow: hidden;
+                border: 1px solid rgba(148, 163, 184, 0.18);
             }}
             .spine {{
-                position:absolute; top:50%; left:7%; width:74%; height:4px; background:#e5e7eb;
+                position:absolute; top:50%; left:7%; width:74%; height:5px;
+                background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 45%, #cbd5e1 100%);
+                border-radius: 999px;
+                box-shadow: 0 0 18px rgba(226, 232, 240, 0.14);
             }}
             .head {{
-                position:absolute; right:4%; top:42%;
-                padding:10px 16px; border-radius:10px; color:white; font-weight:600;
+                position:absolute; right:4%; top:43%;
+                padding:12px 18px; border-radius:12px; color:white; font-weight:700;
                 background: linear-gradient(135deg,#ef4444,#f97316);
                 box-shadow: 0 6px 20px rgba(0,0,0,.25);
-                max-width: 26%;
+                max-width: 24%;
                 text-wrap: balance;
             }}
             .bone {{
-                position:absolute; width:21%; color:#e5e7eb;
+                position:absolute;
+                width:19%;
+                color:#e5e7eb;
+                transform-origin:left center;
+            }}
+            .bone::before {{
+                content: "";
+                position: absolute;
+                left: 8px;
+                top: 18px;
+                width: 78%;
+                height: 2px;
+                border-radius: 999px;
+                background: rgba(226, 232, 240, 0.22);
             }}
             .bone .title {{
-                font-weight:700; margin-bottom:6px; opacity:.95;
+                font-size: 17px;
+                font-weight:700;
+                margin-bottom:10px;
+                opacity:.98;
+                letter-spacing: 0.01em;
             }}
             .bone.root .title {{
                 color:#fca5a5;
+                text-shadow: 0 0 12px rgba(252, 165, 165, 0.18);
             }}
             .cause {{
-                font-size:12px; margin:4px 0; padding:4px 6px;
-                border-radius:6px; background:#111827; border:1px solid #374151;
-                cursor:pointer;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                font-size:13px;
+                margin:8px 0;
+                padding:8px 10px;
+                border-radius:10px;
+                background: rgba(15, 23, 42, 0.82);
+                border:1px solid rgba(100, 116, 139, 0.45);
                 word-break: break-word;
+                box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
             }}
-            .cause:hover {{ background:#1f2937; }}
+            .cause.root-cause {{
+                border-color: rgba(74, 222, 128, 0.9);
+                box-shadow: 0 0 0 1px rgba(74, 222, 128, 0.45), 0 10px 24px rgba(22, 163, 74, 0.2);
+                background: rgba(20, 83, 45, 0.34);
+            }}
+            .cause-text {{
+                flex: 1;
+            }}
+            .vote-pill {{
+                display:inline-flex;
+                align-items:center;
+                gap:4px;
+                white-space:nowrap;
+                font-size:11px;
+                padding:3px 8px;
+                border-radius:999px;
+                background: rgba(59, 130, 246, 0.16);
+                color: #bfdbfe;
+                border: 1px solid rgba(96, 165, 250, 0.25);
+            }}
             .badge {{
-                display:inline-block; margin-left:6px; font-size:10px; padding:2px 6px;
-                border-radius:999px; background:#22c55e; color:#052e16;
+                display:inline-flex;
+                margin-left:6px;
+                font-size:10px;
+                padding:2px 6px;
+                border-radius:999px;
+                background:#22c55e;
+                color:#052e16;
+                font-weight: 700;
             }}
             .more-causes {{
-                margin-top: 5px;
+                margin-top: 8px;
                 font-size: 11px;
                 color: #cbd5e1;
                 opacity: 0.9;
             }}
-            .bone.top {{ transform: rotate(-24deg); transform-origin:left center; }}
-            .bone.bottom {{ transform: rotate(24deg); transform-origin:left center; }}
+            .bone.top {{ transform: rotate(-18deg); }}
+            .bone.bottom {{ transform: rotate(18deg); }}
 
-            .b0 {{ left:10%; top:19%; }}
-            .b1 {{ left:37%; top:11%; }}
-            .b2 {{ left:10%; top:62%; }}
-            .b3 {{ left:37%; top:70%; }}
+            .b0 {{ left:6%; top:16%; }}
+            .b1 {{ left:33%; top:10%; }}
+            .b2 {{ left:6%; top:63%; }}
+            .b3 {{ left:33%; top:69%; }}
 
             .footer {{
-                position:absolute; bottom:8px; left:12px; color:#9ca3af; font-size:12px;
+                position:absolute;
+                bottom:10px;
+                left:14px;
+                color:#9ca3af;
+                font-size:12px;
             }}
         </style>
 
@@ -546,13 +664,14 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
             <div class="bone bottom b2" data-cat="2"></div>
             <div class="bone bottom b3" data-cat="3"></div>
 
-            <div class="footer">Tip: click a cause to edit/delete in this preview. Main list remains the source of truth.</div>
+            <div class="footer">Votes drive focus. Use the controls below the diagram to prioritize causes.</div>
         </div>
 
         <script>
             const payload = {payload_json};
             const categories = Object.keys(payload.data || {{}});
             const root = payload.root;
+            const rootCauseId = payload.rootCauseId;
             const head = document.getElementById("head");
             head.textContent = payload.problem || "Problem";
 
@@ -571,34 +690,33 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
                     title.textContent = cat;
                     b.appendChild(title);
 
-                    const causes = payload.data[cat] || [];
-                    const visibleCauses = causes.slice(0, 5);
-                    visibleCauses.forEach((c, i) => {{
+                    const causes = (payload.data[cat] || []).slice().sort((left, right) => {{
+                        return (right.votes || 0) - (left.votes || 0);
+                    }});
+                    const visibleCauses = causes.slice(0, 3);
+                    visibleCauses.forEach((c) => {{
                         const el = document.createElement("div");
                         el.className = "cause";
-                        el.textContent = c;
+                        if (rootCauseId && c.id === rootCauseId) {{
+                            el.classList.add("root-cause");
+                        }}
 
-                        if (root && cat === root) {{
+                        const text = document.createElement("div");
+                        text.className = "cause-text";
+                        text.textContent = c.text;
+                        el.appendChild(text);
+
+                        const votePill = document.createElement("span");
+                        votePill.className = "vote-pill";
+                        votePill.textContent = `👍 ${{c.votes || 0}}`;
+                        el.appendChild(votePill);
+
+                        if (root && cat === root && rootCauseId && c.id === rootCauseId) {{
                             const badge = document.createElement("span");
                             badge.className = "badge";
                             badge.textContent = "focus";
-                            el.appendChild(badge);
+                            votePill.appendChild(badge);
                         }}
-
-                        el.onclick = () => {{
-                            const action = prompt("Edit cause (leave empty to delete):", c);
-                            if (action === null) return;
-                            if (action.trim() === "") {{
-                                payload.data[cat].splice(i, 1);
-                            }} else {{
-                                payload.data[cat][i] = action.trim();
-                            }}
-                            render();
-                            window.parent.postMessage({{
-                                type: "fishbone_update",
-                                data: payload.data
-                            }}, "*");
-                        }};
                         b.appendChild(el);
                     }});
 
@@ -614,7 +732,7 @@ def render_interactive_fishbone(problem: str, data: dict[str, list[str]], root_c
         </script>
         """
 
-        components.html(html, height=520)
+        components.html(html, height=640)
 
 
 def ensure_spill_over_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -2021,25 +2139,32 @@ with tab7:
     # -------------------------
     # Problem Statement
     # -------------------------
-    problem = st.text_input(
+    problem_input = st.text_input(
         "🎯 Problem Statement",
         value=st.session_state.get("ai_problem", "High Defects / Spillover"),
         key="fishbone_problem_input",
     )
+    problem = problem_input or "High Defects / Spillover"
 
     # -------------------------
     # Categories
     # -------------------------
-    categories = ["People", "Process", "Tools", "Dependencies"]
+    categories = list(FISHBONE_CATEGORIES)
 
+    legacy_vote_data = st.session_state.get("fishbone_votes", {})
     if "fishbone_data" not in st.session_state:
         st.session_state.fishbone_data = {cat: [] for cat in categories}
     else:
-        # Keep only supported categories and preserve existing entries for them.
         existing_data = st.session_state.fishbone_data
         st.session_state.fishbone_data = {
-            cat: list(existing_data.get(cat, [])) for cat in categories
+            cat: normalize_fishbone_category(existing_data.get(cat, []), legacy_vote_data.get(cat, {}))
+            for cat in categories
         }
+
+    if "fishbone_user_votes" not in st.session_state:
+        st.session_state.fishbone_user_votes = set()
+    else:
+        st.session_state.fishbone_user_votes = {str(cause_id) for cause_id in st.session_state.fishbone_user_votes}
 
     # -------------------------
     # Add Causes (Interactive)
@@ -2051,13 +2176,22 @@ with tab7:
     quick_cause_text = quick_col2.text_input("Cause", key="fishbone_quick_cause")
     if quick_col3.button("Add Cause", key="fishbone_quick_add"):
         if quick_cause_text.strip():
-            st.session_state.fishbone_data[quick_category].append(quick_cause_text.strip())
-            clear_session_keys("fishbone_quick_cause")
-            st.rerun()
+            clean_cause = quick_cause_text.strip()
+            existing_texts = {
+                cause["text"].strip().casefold()
+                for cause in st.session_state.fishbone_data[quick_category]
+            }
+            if clean_cause.casefold() in existing_texts:
+                st.warning(f'"{clean_cause}" already exists in {quick_category}.')
+            else:
+                st.session_state.fishbone_data[quick_category].append(build_fishbone_cause(clean_cause))
+                clear_session_keys("fishbone_quick_cause")
+                st.rerun()
 
     utility_col1, utility_col2 = st.columns([1, 1])
     if utility_col1.button("🧹 Clear All Causes", key="fishbone_clear_all"):
         st.session_state.fishbone_data = {cat: [] for cat in categories}
+        st.session_state.fishbone_user_votes = set()
         st.rerun()
 
     total_cause_count = sum(len(st.session_state.fishbone_data.get(cat, [])) for cat in categories)
@@ -2074,18 +2208,30 @@ with tab7:
             add_col, clear_col = st.columns([1, 1])
             if add_col.button("+ Add", key=f"btn_{cat}"):
                 if new_cause.strip():
-                    st.session_state.fishbone_data[cat].append(new_cause.strip())
-                    clear_session_keys(f"input_{cat}")
-                    st.rerun()
+                    clean_cause = new_cause.strip()
+                    existing_texts = {
+                        cause["text"].strip().casefold()
+                        for cause in st.session_state.fishbone_data[cat]
+                    }
+                    if clean_cause.casefold() in existing_texts:
+                        st.warning(f'"{clean_cause}" already exists in {cat}.')
+                    else:
+                        st.session_state.fishbone_data[cat].append(build_fishbone_cause(clean_cause))
+                        clear_session_keys(f"input_{cat}")
+                        st.rerun()
 
             if clear_col.button("Clear", key=f"clear_{cat}"):
+                for cause in st.session_state.fishbone_data[cat]:
+                    st.session_state.fishbone_user_votes.discard(cause["id"])
                 st.session_state.fishbone_data[cat] = []
                 st.rerun()
 
             for cause_index, cause in enumerate(list(st.session_state.fishbone_data[cat])):
-                cause_text_col, cause_delete_col = st.columns([5, 1])
-                cause_text_col.caption(f"{cause_index + 1}. {cause}")
+                cause_text_col, cause_vote_col, cause_delete_col = st.columns([4, 1, 1])
+                cause_text_col.caption(f"{cause_index + 1}. {cause['text']}")
+                cause_vote_col.caption(f"👍 {cause['votes']}")
                 if cause_delete_col.button("✕", key=f"del_{cat}_{cause_index}"):
+                    st.session_state.fishbone_user_votes.discard(cause["id"])
                     st.session_state.fishbone_data[cat].pop(cause_index)
                     st.rerun()
 
@@ -2130,20 +2276,73 @@ Category: cause1, cause2
     # -------------------------
     st.write("### 🐟 Fishbone Diagram")
 
-    category_counts = {
-        cat: len(st.session_state.fishbone_data.get(cat, []))
+    all_causes = [
+        (cause, cat, cause["votes"])
         for cat in categories
-    }
-    root_category = max(category_counts, key=category_counts.get) if category_counts else None
-    if root_category and category_counts[root_category] == 0:
-        root_category = None
+        for cause in st.session_state.fishbone_data.get(cat, [])
+    ]
+    sorted_causes = sorted(
+        all_causes,
+        key=lambda item: (-item[2], categories.index(item[1]), st.session_state.fishbone_data[item[1]].index(item[0])),
+    )
+    voted_causes = [item for item in sorted_causes if item[2] > 0]
+    root_cause = voted_causes[0][0] if voted_causes else None
+    root_category = voted_causes[0][1] if voted_causes else None
 
-    render_interactive_fishbone(problem, st.session_state.fishbone_data, root_category)
+    render_interactive_fishbone(
+        problem,
+        st.session_state.fishbone_data,
+        root_category,
+        root_cause["id"] if root_cause else None,
+    )
 
-    if root_category:
-        st.success(f"🎯 Current Focus Area: {root_category}")
+    if root_category and root_cause:
+        st.success(f"🎯 Current Focus Cause: {root_cause['text']} ({root_category}) with 👍 {root_cause['votes']}")
     else:
-        st.info("Add causes to highlight a focus area.")
+        st.info("Add causes and let the team vote to highlight a focus cause.")
+
+    # -------------------------
+    # Voting
+    # -------------------------
+    st.write("### 👍 Vote on Causes")
+
+    if all_causes:
+        for cat in categories:
+            causes = list(st.session_state.fishbone_data.get(cat, []))
+            if not causes:
+                continue
+
+            st.markdown(f"**{cat}**")
+            sorted_category_causes = sorted(
+                causes,
+                key=lambda cause_item: (-cause_item["votes"], causes.index(cause_item)),
+            )
+
+            for cause in sorted_category_causes:
+                vote_col1, vote_col2, vote_col3 = st.columns([6, 1, 1])
+                vote_col1.write(cause["text"])
+                vote_col2.write(f"👍 {cause['votes']}")
+                already_voted = cause["id"] in st.session_state.fishbone_user_votes
+                if vote_col3.button("Vote", key=f"vote_{cause['id']}", disabled=already_voted):
+                    cause["votes"] += 1
+                    st.session_state.fishbone_user_votes.add(cause["id"])
+                    st.rerun()
+    else:
+        st.info("Add at least one cause before collecting votes.")
+
+    # -------------------------
+    # Top Causes
+    # -------------------------
+    st.write("### 🏆 Top Causes")
+
+    if voted_causes:
+        for cause, cat, votes in voted_causes[:3]:
+            prefix = "🔥 " if votes >= 3 else ""
+            st.success(f"{prefix}{cause['text']} ({cat}) - 👍 {votes}")
+    elif all_causes:
+        st.info("Votes are still at 0. Ask the team to vote to surface the top causes.")
+    else:
+        st.info("No causes added yet.")
 
     # -------------------------
     # Identify Root Cause (Simple logic)
@@ -2151,14 +2350,13 @@ Category: cause1, cause2
     st.write("### 🔍 Identify Root Cause")
 
     if st.button("Find Root Cause", key="fishbone_find_root_cause"):
-        if any(len(st.session_state.fishbone_data[cat]) > 0 for cat in categories):
-            max_cat = max(
-                categories,
-                key=lambda k: len(st.session_state.fishbone_data[k]),
-            )
-            st.success(f"Primary Problem Area: {max_cat}")
+        if voted_causes:
+            selected_root_cause, focus_category, vote_total = voted_causes[0]
+            st.error(f"🎯 Root Cause: {selected_root_cause['text']} ({focus_category}) - 👍 {vote_total}")
+        elif all_causes:
+            st.info("Votes are required before identifying a root cause.")
         else:
-            st.info("Add at least one cause to identify the primary problem area.")
+            st.info("Add at least one cause to identify the root cause.")
 
     # -------------------------
     # Generate Actions
@@ -2166,14 +2364,12 @@ Category: cause1, cause2
     st.write("### 🚀 Suggested Actions")
 
     if st.button("Generate Actions from Fishbone", key="fishbone_generate_actions"):
-        all_causes = []
-        for cat in categories:
-            causes = st.session_state.fishbone_data.get(cat, [])
-            for cause in causes:
-                all_causes.append(f"{cat}: {cause}")
+        top_causes_for_actions = voted_causes[:5]
 
         if not all_causes:
             st.info("Add causes before generating actions.")
+        elif not top_causes_for_actions:
+            st.info("Collect team votes first so actions can be generated from the highest-priority causes.")
         else:
             api_key, key_source, secret_keys = get_openai_api_key()
 
@@ -2183,11 +2379,15 @@ Category: cause1, cause2
                     f"Diagnostics: key_source={key_source}; top_level_secrets={', '.join(secret_keys) if secret_keys else 'none'}"
                 )
             else:
+                prioritized_causes = [
+                    f"{cat}: {cause['text']} (Votes: {votes})"
+                    for cause, cat, votes in top_causes_for_actions
+                ]
                 prompt = f"""
 Problem: {problem}
 
-Causes:
-{chr(10).join(all_causes)}
+Top voted causes:
+{chr(10).join(prioritized_causes)}
 
 Suggest 3-5 actionable improvements.
 """
